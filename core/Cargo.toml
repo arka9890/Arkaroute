@@ -25,3 +25,4 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 rust-embed = "8"
 bytes = "1"
+time = { version = "0.3", features = ["formatting"] }
