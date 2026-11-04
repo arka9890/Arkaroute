@@ -419,7 +419,7 @@ pub enum UpstreamOutcome {
 pub trait ProviderAdapter: Send + Sync {
     async fn chat(&self, req: &ChatCompletionRequest) -> Result<UpstreamOutcome, UpstreamError>;
 }
-pub fn adapter_for(cfg: &ProviderConfig, client: reqwest::Client) -> Box<dyn ProviderAdapter>;
+pub fn adapter_for(cfg: &ProviderConfig, client: reqwest::Client, request_timeout_ms: u64) -> Box<dyn ProviderAdapter>;
 ```
 `openai_compat` posts to `{base_url}/chat/completions` with `Authorization: Bearer {api_key}`, `Content-Type: application/json`.
 
@@ -704,7 +704,7 @@ Expected: FAIL — route missing.
 
 - [ ] **Step 3: Implement inbound mapping and handler**
 
-`inbound_messages`: Anthropic body (`model`, `system`, `messages`, `max_tokens`, `tools`, `tool_choice`, `stream`, `temperature`, `top_p`) → canonical `ChatCompletionRequest` (system string → first system message; `tool_choice` `{"type":"auto"|"any"|"tool","name":…}` → OpenAI `auto`/`required`/`{"type":"function","function":{"name":…}}`; Anthropic `thinking` in `extra`). Non-stream: canonical JSON → `a2o_response`. Stream: canonical events → `o2a_stream` → frames, no `[DONE]`.
+`inbound_messages`: Anthropic body (`model`, `system`, `messages`, `max_tokens`, `tools`, `tool_choice`, `stream`, `temperature`, `top_p`) → canonical `ChatCompletionRequest` (system string → first system message; `tool_choice` `{"type":"auto"|"any"|"tool","name":…}` → OpenAI `auto`/`required`/`{"type":"function","function":{"name":…}}`; Anthropic `thinking` in `extra`). Non-stream: canonical upstream JSON → **new** `pub fn o2a_response(body: serde_json::Value, model: &str) -> serde_json::Value` (canonical OpenAI → Anthropic message shape; the inverse of Task 8's `a2o_response`) added in this task's `translate/mod.rs` change. Stream: canonical events → `o2a_stream` → frames, no `[DONE]`.
 
 - [ ] **Step 4: Run test to verify it passes**
 
