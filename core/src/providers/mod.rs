@@ -66,12 +66,19 @@ pub trait ProviderAdapter: Send + Sync {
     async fn chat(&self, req: &ChatCompletionRequest) -> Result<UpstreamOutcome, UpstreamError>;
 }
 
-/// Build the adapter matching `cfg.kind`.
-pub fn adapter_for(cfg: &ProviderConfig, client: reqwest::Client) -> Box<dyn ProviderAdapter> {
+/// Build the adapter matching `cfg.kind`. `request_timeout_ms` (from
+/// `GatewayConfig::request_timeout_ms`) bounds every wait on the upstream.
+pub fn adapter_for(
+    cfg: &ProviderConfig,
+    client: reqwest::Client,
+    request_timeout_ms: u64,
+) -> Box<dyn ProviderAdapter> {
     match &cfg.kind {
-        ProviderKind::OpenAiCompatible => {
-            Box::new(openai_compat::OpenAiCompatAdapter::new(cfg, client))
-        }
+        ProviderKind::OpenAiCompatible => Box::new(openai_compat::OpenAiCompatAdapter::new(
+            cfg,
+            client,
+            request_timeout_ms,
+        )),
         // Replaced by the Anthropic adapter in Task 9; no test constructs an
         // Anthropic provider until then.
         ProviderKind::Anthropic => todo!("Anthropic adapter lands in Task 9"),

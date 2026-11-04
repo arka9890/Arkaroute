@@ -5,7 +5,7 @@ use std::time::Duration;
 use futures_util::StreamExt;
 use serde_json::{json, Value};
 
-use crate::config::{GatewayConfig, ProviderConfig};
+use crate::config::ProviderConfig;
 use crate::protocol::ChatCompletionRequest;
 use crate::providers::{ProviderAdapter, UpstreamError, UpstreamFailure, UpstreamOutcome};
 use crate::sse::{SseEvent, SseParser};
@@ -21,15 +21,15 @@ pub struct OpenAiCompatAdapter {
 }
 
 impl OpenAiCompatAdapter {
-    /// Build from `cfg`. The factory signature carries no live config, so the
-    /// request timeout is the gateway default (`request_timeout_ms`).
-    pub fn new(cfg: &ProviderConfig, client: reqwest::Client) -> Self {
+    /// Build from `cfg`, applying `request_timeout_ms` (from
+    /// `GatewayConfig::request_timeout_ms`) to every wait on the upstream.
+    pub fn new(cfg: &ProviderConfig, client: reqwest::Client, request_timeout_ms: u64) -> Self {
         Self {
             provider: cfg.id.clone(),
             base_url: cfg.base_url.clone(),
             api_key: cfg.api_key.clone(),
             client,
-            timeout: Duration::from_millis(GatewayConfig::default().request_timeout_ms),
+            timeout: Duration::from_millis(request_timeout_ms),
         }
     }
 
@@ -153,11 +153,13 @@ impl ProviderAdapter for OpenAiCompatAdapter {
         }
 
         let mut resp = self.send(&body).await?;
-        if !resp.status().is_success() && injected {
+        if injected && resp.status().as_u16() == 400 {
             // Retry gate: no event has reached the caller yet — `chat()` has
             // not returned a stream — so a retry here can never violate the
-            // "no fallback after first chunk" rule. The injected
-            // `stream_options` may be exactly what the upstream rejected.
+            // "no fallback after first chunk" rule. Only an HTTP 400 of the
+            // injected attempt is retried: it may be the upstream rejecting
+            // the `stream_options` we added. Any other failure (429, 401,
+            // 5xx, transport) is reported as-is.
             resp = self.send(&plain).await?;
         }
         if !resp.status().is_success() {

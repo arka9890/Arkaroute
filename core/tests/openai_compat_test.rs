@@ -16,6 +16,9 @@ use omniroute_core::providers::{adapter_for, UpstreamError, UpstreamFailure, Ups
 use omniroute_core::sse::SseEvent;
 use serde_json::{json, Value};
 
+/// Request timeout the tests hand to `adapter_for`.
+const REQUEST_TIMEOUT_MS: u64 = 5_000;
+
 /// One request the mock upstream received, for assertions.
 #[derive(Debug, Clone)]
 struct Recorded {
@@ -135,6 +138,19 @@ fn chunk(id: u64, text: &str) -> String {
     )
 }
 
+/// A 200 JSON response whose body arrives only after `delay`.
+fn delayed_json(body: &'static str, delay: std::time::Duration) -> Response {
+    let stream = async_stream::stream! {
+        tokio::time::sleep(delay).await;
+        yield Ok::<_, std::convert::Infallible>(Bytes::from(body));
+    };
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from_stream(stream))
+        .expect("response builds")
+}
+
 fn provider(base_url: String) -> ProviderConfig {
     ProviderConfig {
         id: "mock".into(),
@@ -185,7 +201,11 @@ async fn json_response_is_returned_verbatim() {
     })
     .await;
 
-    let adapter = adapter_for(&provider(upstream.base_url()), reqwest::Client::new());
+    let adapter = adapter_for(
+        &provider(upstream.base_url()),
+        reqwest::Client::new(),
+        REQUEST_TIMEOUT_MS,
+    );
     let outcome = adapter
         .chat(&chat_req("test-model", false))
         .await
@@ -228,7 +248,11 @@ async fn stream_is_replayed_as_canonical_events() {
     })
     .await;
 
-    let adapter = adapter_for(&provider(upstream.base_url()), reqwest::Client::new());
+    let adapter = adapter_for(
+        &provider(upstream.base_url()),
+        reqwest::Client::new(),
+        REQUEST_TIMEOUT_MS,
+    );
     let outcome = adapter
         .chat(&chat_req("m", true))
         .await
@@ -279,7 +303,11 @@ async fn stream_injects_include_usage_and_retries_once_on_400() {
     })
     .await;
 
-    let adapter = adapter_for(&provider(upstream.base_url()), reqwest::Client::new());
+    let adapter = adapter_for(
+        &provider(upstream.base_url()),
+        reqwest::Client::new(),
+        REQUEST_TIMEOUT_MS,
+    );
     let outcome = adapter
         .chat(&chat_req("m", true))
         .await
@@ -318,7 +346,11 @@ async fn upstream_429_maps_to_fallbackable_error() {
     })
     .await;
 
-    let adapter = adapter_for(&provider(upstream.base_url()), reqwest::Client::new());
+    let adapter = adapter_for(
+        &provider(upstream.base_url()),
+        reqwest::Client::new(),
+        REQUEST_TIMEOUT_MS,
+    );
     let err = match adapter.chat(&chat_req("m", false)).await {
         Err(e) => e,
         Ok(_) => panic!("expected an upstream error"),
@@ -348,7 +380,11 @@ async fn connection_refused_maps_to_network_failure() {
         addr
     };
 
-    let adapter = adapter_for(&provider(format!("http://{addr}")), reqwest::Client::new());
+    let adapter = adapter_for(
+        &provider(format!("http://{addr}")),
+        reqwest::Client::new(),
+        REQUEST_TIMEOUT_MS,
+    );
     let err = match adapter.chat(&chat_req("m", false)).await {
         Err(e) => e,
         Ok(_) => panic!("expected a network failure"),
@@ -363,5 +399,67 @@ async fn connection_refused_maps_to_network_failure() {
     match &err.failure {
         UpstreamFailure::Network(msg) => assert!(!msg.is_empty(), "diagnostic: {msg}"),
         other => panic!("expected Network failure, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn injected_attempt_429_is_not_retried() {
+    let upstream = spawn_upstream(|_| {
+        (
+            StatusCode::TOO_MANY_REQUESTS,
+            [(header::CONTENT_TYPE, "application/json")],
+            r#"{"error":{"message":"rate limited","type":"rate_limit_error"}}"#,
+        )
+            .into_response()
+    })
+    .await;
+
+    let adapter = adapter_for(
+        &provider(upstream.base_url()),
+        reqwest::Client::new(),
+        REQUEST_TIMEOUT_MS,
+    );
+    let err = match adapter.chat(&chat_req("m", true)).await {
+        Err(e) => e,
+        Ok(_) => panic!("expected an upstream error"),
+    };
+
+    assert_eq!(err.status(), 429);
+    assert!(err.is_fallbackable());
+    let requests = upstream.requests.lock().unwrap();
+    assert_eq!(
+        requests.len(),
+        1,
+        "only an HTTP 400 of the injected attempt may be retried"
+    );
+    assert_eq!(
+        requests[0].body["stream_options"],
+        json!({"include_usage": true}),
+        "the failing attempt was the injected one"
+    );
+}
+
+#[tokio::test]
+async fn configured_request_timeout_is_honored() {
+    // Body arrives after 1s; the adapter is configured with a 100ms budget,
+    // so the call must fail with Timeout instead of waiting for the body.
+    let upstream = spawn_upstream(|_| {
+        delayed_json(
+            r#"{"id":"late","object":"chat.completion","created":1,"model":"m","choices":[]}"#,
+            std::time::Duration::from_secs(1),
+        )
+    })
+    .await;
+
+    let adapter = adapter_for(&provider(upstream.base_url()), reqwest::Client::new(), 100);
+    let err = match adapter.chat(&chat_req("m", false)).await {
+        Err(e) => e,
+        Ok(_) => panic!("expected the configured timeout to fire"),
+    };
+
+    assert_eq!(err.status(), 504);
+    match &err.failure {
+        UpstreamFailure::Timeout => {}
+        other => panic!("expected Timeout, got {other:?}"),
     }
 }
