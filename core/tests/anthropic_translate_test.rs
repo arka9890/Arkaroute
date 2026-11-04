@@ -193,7 +193,7 @@ fn a2o_stream_emits_canonical_text_chunks() {
     ];
 
     let out = a2o_stream(events, "gpt-4o");
-    assert_eq!(out.len(), 5, "two text chunks + usage + finish + [DONE]");
+    assert_eq!(out.len(), 5, "two text chunks + finish + usage + [DONE]");
 
     let first = data_of(&out[0]);
     assert_eq!(first["id"], json!("msg_1"));
@@ -213,20 +213,20 @@ fn a2o_stream_emits_canonical_text_chunks() {
         "later text chunks carry only the content delta"
     );
 
-    let usage = data_of(&out[2]);
+    let finish = data_of(&out[2]);
+    assert_eq!(finish["choices"][0]["delta"], json!({}));
+    assert_eq!(
+        finish["choices"][0]["finish_reason"],
+        json!("stop"),
+        "final finish_reason is stop, immediately before the usage chunk"
+    );
+
+    let usage = data_of(&out[3]);
     assert_eq!(usage["choices"], json!([]));
     assert_eq!(
         usage["usage"],
         json!({"prompt_tokens": 7, "completion_tokens": 3}),
         "usage is captured from message_start.input_tokens + message_delta.output_tokens"
-    );
-
-    let finish = data_of(&out[3]);
-    assert_eq!(finish["choices"][0]["delta"], json!({}));
-    assert_eq!(
-        finish["choices"][0]["finish_reason"],
-        json!("stop"),
-        "final finish_reason is stop"
     );
 
     assert_eq!(out[4].event, None, "chunks are data-only frames");
@@ -264,7 +264,7 @@ fn a2o_stream_maps_tool_use_to_tool_call_chunks() {
     ];
 
     let out = a2o_stream(events, "gpt-4o");
-    assert_eq!(out.len(), 6, "tool call deltas + usage + finish + [DONE]");
+    assert_eq!(out.len(), 6, "tool call deltas + finish + usage + [DONE]");
 
     let start = data_of(&out[0]);
     assert_eq!(
@@ -292,13 +292,86 @@ fn a2o_stream_maps_tool_use_to_tool_call_chunks() {
         "arguments accumulate across chunks when concatenated"
     );
 
-    let finish = data_of(&out[4]);
+    let finish = data_of(&out[3]);
     assert_eq!(
         finish["choices"][0]["finish_reason"],
         json!("tool_calls"),
         "stop_reason tool_use maps to finish_reason tool_calls"
     );
+    let usage = data_of(&out[4]);
+    assert_eq!(
+        usage["usage"],
+        json!({"prompt_tokens": 7, "completion_tokens": 3}),
+        "usage follows the finish chunk (include_usage ordering)"
+    );
     assert_eq!(out[5].data, "[DONE]", "the stream ends with [DONE]");
+}
+
+#[test]
+fn tool_call_index_is_ordinal_after_text_block() {
+    // Text occupies Anthropic content block 0, so the tool_use block sits at
+    // index 1 — the canonical `tool_calls[].index` must still be the 0-based
+    // ordinal of the tool call itself, not the content-block index.
+    let events = vec![
+        anthropic_event("message_start", json!({
+            "type": "message_start",
+            "message": {"id": "msg_1", "type": "message", "role": "assistant", "model": "claude-x",
+                        "content": [], "stop_reason": null,
+                        "usage": {"input_tokens": 7, "output_tokens": 0}}
+        })),
+        anthropic_event("content_block_start", json!({
+            "type": "content_block_start", "index": 0,
+            "content_block": {"type": "text", "text": ""}
+        })),
+        anthropic_event("content_block_delta", json!({
+            "type": "content_block_delta", "index": 0,
+            "delta": {"type": "text_delta", "text": "Checking the weather"}
+        })),
+        anthropic_event("content_block_stop", json!({"type": "content_block_stop", "index": 0})),
+        anthropic_event("content_block_start", json!({
+            "type": "content_block_start", "index": 1,
+            "content_block": {"type": "tool_use", "id": "tool_1", "name": "f", "input": {}}
+        })),
+        anthropic_event("content_block_delta", json!({
+            "type": "content_block_delta", "index": 1,
+            "delta": {"type": "input_json_delta", "partial_json": "{\"city\":\"Paris\"}"}
+        })),
+        anthropic_event("content_block_stop", json!({"type": "content_block_stop", "index": 1})),
+        anthropic_event("message_delta", json!({
+            "type": "message_delta",
+            "delta": {"stop_reason": "tool_use", "stop_sequence": null},
+            "usage": {"output_tokens": 3}
+        })),
+        anthropic_event("message_stop", json!({"type": "message_stop"})),
+    ];
+
+    let out = a2o_stream(events, "gpt-4o");
+
+    let text = data_of(&out[0]);
+    assert_eq!(
+        text["choices"][0]["delta"],
+        json!({"role": "assistant", "content": "Checking the weather"}),
+        "the text block streams first"
+    );
+
+    let tool_start = data_of(&out[1]);
+    assert_eq!(
+        tool_start["choices"][0]["delta"]["tool_calls"],
+        json!([{
+            "index": 0,
+            "id": "tool_1",
+            "type": "function",
+            "function": {"name": "f", "arguments": ""}
+        }]),
+        "the first tool call is ordinal 0 although its content block is index 1"
+    );
+
+    let tool_args = data_of(&out[2]);
+    assert_eq!(
+        tool_args["choices"][0]["delta"]["tool_calls"],
+        json!([{"index": 0, "function": {"arguments": "{\"city\":\"Paris\"}"}}]),
+        "argument deltas carry the same tool ordinal"
+    );
 }
 
 #[test]
@@ -328,22 +401,26 @@ fn a2o_stream_captures_usage_from_message_events() {
     ];
 
     let out = a2o_stream(events, "gpt-4o");
+    // include_usage ordering: text chunk, finish chunk, usage chunk, [DONE].
+    assert_eq!(out.len(), 4, "text + finish + usage + [DONE]");
 
-    let usage_pos = out
-        .iter()
-        .position(|ev| data_of(ev).get("usage").is_some())
-        .expect("a usage chunk is emitted");
-    let usage = data_of(&out[usage_pos]);
+    let finish = data_of(&out[1]);
+    assert_eq!(
+        finish["choices"][0]["finish_reason"],
+        json!("stop"),
+        "the finish chunk precedes the usage chunk"
+    );
+
+    let usage = data_of(&out[2]);
     assert_eq!(
         usage["usage"],
         json!({"prompt_tokens": 7, "completion_tokens": 3}),
         "input_tokens → prompt_tokens, output_tokens → completion_tokens"
     );
-    assert!(
-        usage_pos < out.len() - 1,
-        "the usage chunk lands before [DONE]"
+    assert_eq!(
+        out[3].data, "[DONE]",
+        "the usage chunk lands between the finish chunk and [DONE]"
     );
-    assert_eq!(out.last().unwrap().data, "[DONE]");
 }
 
 #[test]

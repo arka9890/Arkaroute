@@ -27,8 +27,12 @@ pub fn a2o_stream(events: Vec<SseEvent>, model: &str) -> Vec<SseEvent> {
     let mut id = String::new();
     let mut input_tokens: u64 = 0;
     let mut role_sent = false;
-    // The open `tool_use` block: (block index, tool id, function name).
+    // The open `tool_use` block: (tool ordinal, tool id, function name).
     let mut tool: Option<(u64, String, String)> = None;
+    // 0-based ordinal of each `tool_use` block: the canonical
+    // `tool_calls[].index`. Anthropic's content-block index also counts text
+    // blocks, so the two diverge as soon as a message streams text first.
+    let mut tool_ordinal: u64 = 0;
     let mut finished = false;
 
     for ev in events {
@@ -40,13 +44,14 @@ pub fn a2o_stream(events: Vec<SseEvent>, model: &str) -> Vec<SseEvent> {
                 id = message.id;
                 input_tokens = message.usage.input_tokens;
             }
-            AnthropicStreamEvent::ContentBlockStart {
-                index,
-                content_block,
-            } => {
+            AnthropicStreamEvent::ContentBlockStart { content_block, .. } => {
                 if content_block.kind == "tool_use" {
                     // The block start announces the call's identity with
-                    // empty arguments; argument deltas follow.
+                    // empty arguments; argument deltas follow. Canonical
+                    // chunks number tool calls by ordinal, not by the
+                    // Anthropic content-block index.
+                    let ordinal = tool_ordinal;
+                    tool_ordinal += 1;
                     let tool_id = content_block.id.unwrap_or_default();
                     let name = content_block.name.unwrap_or_default();
                     out.push(canonical_chunk(
@@ -55,7 +60,7 @@ pub fn a2o_stream(events: Vec<SseEvent>, model: &str) -> Vec<SseEvent> {
                         model,
                         json!({
                             "tool_calls": [{
-                                "index": index,
+                                "index": ordinal,
                                 "id": tool_id,
                                 "type": "function",
                                 "function": {"name": name, "arguments": ""},
@@ -63,7 +68,7 @@ pub fn a2o_stream(events: Vec<SseEvent>, model: &str) -> Vec<SseEvent> {
                         }),
                         Value::Null,
                     ));
-                    tool = Some((index, tool_id, name));
+                    tool = Some((ordinal, tool_id, name));
                 }
             }
             AnthropicStreamEvent::ContentBlockDelta { delta, .. } => match delta.kind.as_str() {
@@ -83,7 +88,7 @@ pub fn a2o_stream(events: Vec<SseEvent>, model: &str) -> Vec<SseEvent> {
                 }
                 "input_json_delta" => {
                     let arguments = delta.partial_json.unwrap_or_default();
-                    let Some((index, ..)) = &tool else {
+                    let Some((ordinal, ..)) = &tool else {
                         continue; // delta without a preceding block start
                     };
                     if arguments.is_empty() {
@@ -95,7 +100,7 @@ pub fn a2o_stream(events: Vec<SseEvent>, model: &str) -> Vec<SseEvent> {
                         model,
                         json!({
                             "tool_calls": [{
-                                "index": index,
+                                "index": ordinal,
                                 "function": {"arguments": arguments},
                             }]
                         }),
@@ -112,8 +117,15 @@ pub fn a2o_stream(events: Vec<SseEvent>, model: &str) -> Vec<SseEvent> {
                     continue;
                 }
                 finished = true;
-                // The usage totals are complete exactly here: emit them
-                // before the closing chunk, then finish.
+                // OpenAI `include_usage` ordering: the finish chunk closes
+                // the choices, then usage is reported, then `[DONE]`.
+                out.push(canonical_chunk(
+                    &id,
+                    created,
+                    model,
+                    json!({}),
+                    json!(canonical_finish_reason(delta.stop_reason.as_deref())),
+                ));
                 let output_tokens = usage.output_tokens;
                 if input_tokens > 0 || output_tokens > 0 {
                     out.push(canonical_usage_chunk(
@@ -124,13 +136,6 @@ pub fn a2o_stream(events: Vec<SseEvent>, model: &str) -> Vec<SseEvent> {
                         output_tokens,
                     ));
                 }
-                out.push(canonical_chunk(
-                    &id,
-                    created,
-                    model,
-                    json!({}),
-                    json!(canonical_finish_reason(delta.stop_reason.as_deref())),
-                ));
             }
             AnthropicStreamEvent::MessageStop {}
             | AnthropicStreamEvent::Ping {}
