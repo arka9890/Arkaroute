@@ -1,0 +1,27 @@
+[package]
+name = "omniroute-core"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "omniroute_core"
+path = "src/lib.rs"
+
+[[bin]]
+name = "omniroute"
+path = "src/main.rs"
+
+[dependencies]
+axum = "0.8"
+tokio = { version = "1", features = ["full"] }
+reqwest = { version = "0.13", default-features = false, features = ["json", "stream", "rustls", "http2"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+async-trait = "0.1"
+async-stream = "0.3"
+futures-util = "0.3"
+thiserror = "2"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+rust-embed = "8"
+bytes = "1"
