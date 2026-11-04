@@ -151,6 +151,38 @@ fn delayed_json(body: &'static str, delay: std::time::Duration) -> Response {
         .expect("response builds")
 }
 
+/// One SSE frame immediately; the body then stays open without more data.
+fn sse_response_stalling(frame: String) -> Response {
+    let stream = async_stream::stream! {
+        yield Ok::<_, std::convert::Infallible>(Bytes::from(frame));
+        tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+    };
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, "text/event-stream")
+        .body(Body::from_stream(stream))
+        .expect("response builds")
+}
+
+/// One SSE frame immediately, then one every `gap` for `count` frames; the
+/// body stays open afterwards.
+fn sse_response_trickling(frame: String, gap: std::time::Duration, count: usize) -> Response {
+    let stream = async_stream::stream! {
+        for i in 0..count {
+            if i > 0 {
+                tokio::time::sleep(gap).await;
+            }
+            yield Ok::<_, std::convert::Infallible>(Bytes::from(frame.clone()));
+        }
+        tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+    };
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, "text/event-stream")
+        .body(Body::from_stream(stream))
+        .expect("response builds")
+}
+
 fn provider(base_url: String) -> ProviderConfig {
     ProviderConfig {
         id: "mock".into(),
@@ -462,4 +494,103 @@ async fn configured_request_timeout_is_honored() {
         UpstreamFailure::Timeout => {}
         other => panic!("expected Timeout, got {other:?}"),
     }
+}
+
+#[tokio::test]
+async fn stalled_stream_yields_timeout_error() {
+    // One chunk now, then the body stays open past the 300ms total budget:
+    // the stream must end with Timeout (504), not stream forever.
+    let upstream =
+        spawn_upstream(|_| sse_response_stalling(format!("{}\n\n", chunk(1, "a")))).await;
+
+    let adapter = adapter_for(&provider(upstream.base_url()), reqwest::Client::new(), 300);
+    let started = tokio::time::Instant::now();
+    let outcome = adapter
+        .chat(&chat_req("m", true))
+        .await
+        .expect("headers arrive within the budget");
+
+    let mut stream = match outcome {
+        UpstreamOutcome::Stream(s) => s,
+        UpstreamOutcome::Json(_) => panic!("expected Stream outcome"),
+    };
+
+    let first = tokio::time::timeout(std::time::Duration::from_secs(2), stream.next())
+        .await
+        .expect("first chunk arrives promptly")
+        .expect("stream does not end before the first chunk")
+        .expect("first chunk yields without error");
+    assert!(first.data.contains(r#""content":"a""#));
+
+    let next = tokio::time::timeout(std::time::Duration::from_secs(2), stream.next()).await;
+    let err = match next {
+        Ok(Some(Err(e))) => e,
+        Ok(Some(Ok(ev))) => panic!("stalled stream must not yield further events: {ev:?}"),
+        Ok(None) => panic!("stalled stream must end with Timeout, not EOF"),
+        Err(_) => panic!("stalled stream must be cut at the deadline, not hang"),
+    };
+    assert_eq!(err.status(), 504);
+    match &err.failure {
+        UpstreamFailure::Timeout => {}
+        other => panic!("expected Timeout, got {other:?}"),
+    }
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(2),
+        "the cut must come from the total budget, not from the upstream closing"
+    );
+}
+
+#[tokio::test]
+async fn trickling_stream_is_cut_at_total_deadline() {
+    // A chunk every 100ms: every read sits inside a per-read budget, so only
+    // a total deadline can stop the stream before `request_timeout_ms`.
+    let upstream = spawn_upstream(|_| {
+        sse_response_trickling(
+            format!("{}\n\n", chunk(1, "a")),
+            std::time::Duration::from_millis(100),
+            50,
+        )
+    })
+    .await;
+
+    let adapter = adapter_for(&provider(upstream.base_url()), reqwest::Client::new(), 300);
+    let started = tokio::time::Instant::now();
+    let outcome = adapter
+        .chat(&chat_req("m", true))
+        .await
+        .expect("headers arrive within the budget");
+
+    let mut stream = match outcome {
+        UpstreamOutcome::Stream(s) => s,
+        UpstreamOutcome::Json(_) => panic!("expected Stream outcome"),
+    };
+
+    let mut events = Vec::new();
+    let mut error = None;
+    loop {
+        match tokio::time::timeout(std::time::Duration::from_secs(2), stream.next()).await {
+            Ok(Some(Ok(ev))) => events.push(ev),
+            Ok(Some(Err(e))) => {
+                error = Some(e);
+                break;
+            }
+            Ok(None) => break,
+            Err(_) => break, // safety: never hang the test
+        }
+        if started.elapsed() >= std::time::Duration::from_millis(1200) {
+            break; // guard: an implementation without a total bound never errs
+        }
+    }
+
+    let err = error.expect("trickling stream must be cut at the total deadline");
+    assert_eq!(err.status(), 504);
+    match &err.failure {
+        UpstreamFailure::Timeout => {}
+        other => panic!("expected Timeout, got {other:?}"),
+    }
+    assert!(
+        events.len() <= 6,
+        "cut near the 300ms budget, got {} events",
+        events.len()
+    );
 }

@@ -67,7 +67,8 @@ pub trait ProviderAdapter: Send + Sync {
 }
 
 /// Build the adapter matching `cfg.kind`. `request_timeout_ms` (from
-/// `GatewayConfig::request_timeout_ms`) bounds every wait on the upstream.
+/// `GatewayConfig::request_timeout_ms`) is the total budget for the whole
+/// call — streamed responses included — not a per-wait timeout.
 pub fn adapter_for(
     cfg: &ProviderConfig,
     client: reqwest::Client,
