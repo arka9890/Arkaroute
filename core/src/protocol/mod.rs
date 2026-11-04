@@ -9,6 +9,8 @@
 
 use serde::{Deserialize, Serialize};
 
+pub mod anthropic;
+
 /// `false` for present-but-false bools (used to omit them on serialization).
 fn is_false(v: &bool) -> bool {
     !*v
@@ -31,8 +33,13 @@ pub struct ToolCall {
     pub id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub r#type: Option<String>,
+    /// Streaming deltas pin each call to its position; absent on complete messages.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub index: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub function: Option<FunctionDefCall>,
+    #[serde(default, flatten)]
+    pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
 /// The inline function spec of a [`ToolCall`].
@@ -43,14 +50,19 @@ pub struct FunctionDefCall {
     /// JSON-encoded arguments, exactly as they arrived.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub arguments: Option<String>,
+    #[serde(default, flatten)]
+    pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
-/// A tool offered in the request's `tools` array.
+/// A tool offered in the request's `tools` array (`{"type": "function", ...}`).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Tool {
-    /// Always `"function"` on the OpenAI wire.
+    /// OpenAI wire key `type`; always `"function"` today.
+    #[serde(rename = "type")]
     pub kind: String,
     pub function: FunctionDef,
+    #[serde(default, flatten)]
+    pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
 /// The schema-bearing definition of a tool function.
@@ -61,6 +73,8 @@ pub struct FunctionDef {
     pub description: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub parameters: Option<serde_json::Value>,
+    #[serde(default, flatten)]
+    pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
 /// One message in [`ChatCompletionRequest::messages`].
@@ -114,11 +128,13 @@ impl ChatCompletionRequest {
 }
 
 /// Token accounting returned by an upstream.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Usage {
     pub prompt_tokens: u64,
     pub completion_tokens: u64,
     pub total_tokens: u64,
+    #[serde(default, flatten)]
+    pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
 /// One choice in [`ChatCompletionResponse`].
@@ -170,6 +186,8 @@ pub struct ChunkDelta {
     pub tool_calls: Option<Vec<ToolCall>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
+    #[serde(default, flatten)]
+    pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
 /// A decoded OpenAI-format streaming chunk of a `/v1/chat/completions` response.
@@ -205,4 +223,6 @@ pub struct ApiErrorDetail {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ApiErrorBody {
     pub error: ApiErrorDetail,
+    #[serde(default, flatten)]
+    pub extra: serde_json::Map<String, serde_json::Value>,
 }

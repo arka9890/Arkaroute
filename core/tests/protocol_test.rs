@@ -32,7 +32,7 @@ fn serializes_roundtrip_without_losing_fields() {
         "top_p": 0.9,
         "tool_choice": "auto",
         "tools": [{
-            "kind": "function",
+            "type": "function",
             "function": {
                 "name": "get_weather",
                 "description": "Get the weather",
@@ -109,4 +109,67 @@ fn tool_call_message_parses() {
     let tool = &req.messages[1];
     assert_eq!(tool.role, Role::Tool);
     assert_eq!(tool.tool_call_id.as_deref(), Some("call_1"));
+}
+
+#[test]
+fn parses_standard_openai_tool_entry_with_type_key() {
+    let body = json!({
+        "model": "gpt-4o",
+        "messages": [{"role": "user", "content": "hi"}],
+        "tools": [{
+            "type": "function",
+            "function": {"name": "get_weather", "strict": true, "parameters": {"type": "object"}}
+        }]
+    });
+
+    let req = ChatCompletionRequest::from_value(body).unwrap();
+
+    let tools = req.tools.as_ref().unwrap();
+    assert_eq!(tools[0].kind, "function", "wire key \"type\" maps to `kind`");
+    assert_eq!(tools[0].function.name, "get_weather");
+    assert_eq!(
+        tools[0].function.extra.get("strict"),
+        Some(&json!(true)),
+        "unknown FunctionDef fields must survive via extra"
+    );
+
+    // And it must serialize back to the exact wire shape it came from.
+    let out = serde_json::to_value(&req).unwrap();
+    assert_eq!(out["tools"][0]["type"], json!("function"));
+}
+
+#[test]
+fn response_usage_extras_roundtrip_losslessly() {
+    let original = json!({
+        "id": "chatcmpl-1",
+        "object": "chat.completion",
+        "created": 1730000000,
+        "model": "gpt-4o",
+        "choices": [{
+            "index": 0,
+            "message": {"role": "assistant", "content": "hi"},
+            "finish_reason": "stop"
+        }],
+        "usage": {
+            "prompt_tokens": 10,
+            "completion_tokens": 5,
+            "total_tokens": 15,
+            "prompt_tokens_details": {"cached_tokens": 4},
+            "completion_tokens_details": {"reasoning_tokens": 0}
+        }
+    });
+
+    let resp: omniroute_core::protocol::ChatCompletionResponse =
+        serde_json::from_value(original.clone()).unwrap();
+
+    assert_eq!(resp.usage.as_ref().unwrap().prompt_tokens, 10);
+    assert_eq!(resp.usage.as_ref().unwrap().total_tokens, 15);
+    // Unknown usage detail blocks must survive untouched.
+    assert_eq!(
+        resp.usage.as_ref().unwrap().extra.get("prompt_tokens_details"),
+        Some(&json!({"cached_tokens": 4}))
+    );
+
+    let out = serde_json::to_value(&resp).unwrap();
+    assert_eq!(out, original, "response serialization must lose nothing");
 }
