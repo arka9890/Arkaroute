@@ -138,6 +138,22 @@ fn sse_response(parts: Vec<String>) -> Response {
         .expect("response builds")
 }
 
+/// A `text/event-stream` response whose frames are sent and then the body
+/// stalls (stays open) — the adapter must keep streaming, not wait for EOF.
+fn sse_response_blocks_after(parts: Vec<String>) -> Response {
+    let stream = async_stream::stream! {
+        for part in parts {
+            yield Ok::<_, std::convert::Infallible>(Bytes::from(part));
+        }
+        tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+    };
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, "text/event-stream")
+        .body(Body::from_stream(stream))
+        .expect("response builds")
+}
+
 /// One Anthropic SSE frame: `event: <name>\ndata: <json>\n\n`.
 fn frame(event: &str, data: Value) -> String {
     format!("event: {event}\ndata: {data}\n\n")
@@ -420,4 +436,120 @@ async fn upstream_429_is_fallbackable() {
     }
     let requests = upstream.requests.lock().unwrap();
     assert_eq!(requests.len(), 1, "no retry without usage injection");
+}
+
+#[tokio::test]
+async fn sse_yields_first_chunk_before_upstream_blocks() {
+    // The mock emits frames that produce one canonical chunk, then blocks:
+    // the adapter must yield that chunk before the upstream goes quiet, not
+    // buffer until the stream ends.
+    let upstream = spawn_upstream(|_| {
+        sse_response_blocks_after(vec![
+            frame(
+                "content_block_start",
+                json!({
+                    "type": "content_block_start",
+                    "index": 0,
+                    "content_block": {"type": "text", "text": ""},
+                }),
+            ),
+            frame(
+                "content_block_delta",
+                json!({
+                    "type": "content_block_delta",
+                    "index": 0,
+                    "delta": {"type": "text_delta", "text": "Hello"},
+                }),
+            ),
+        ])
+    })
+    .await;
+
+    let adapter = adapter_for(
+        &anthropic_provider(format!("http://{}/v1", upstream.addr)),
+        reqwest::Client::new(),
+        REQUEST_TIMEOUT_MS,
+    );
+    let outcome = adapter
+        .chat(&chat_req("claude-x", true))
+        .await
+        .expect("headers arrive within the budget");
+    let mut stream = match outcome {
+        UpstreamOutcome::Stream(s) => s,
+        UpstreamOutcome::Json(_) => panic!("expected Stream outcome"),
+    };
+    let first = tokio::time::timeout(std::time::Duration::from_secs(5), stream.next())
+        .await
+        .expect("first chunk must arrive before the upstream blocks")
+        .expect("stream stays open until the upstream blocks")
+        .expect("first chunk yields without error");
+    assert!(
+        first.data.contains(r#""content":"Hello""#),
+        "first canonical chunk before the upstream stalled: {}",
+        first.data
+    );
+}
+
+#[tokio::test]
+async fn mid_stream_error_surfaces_after_preceding_events() {
+    // The mock emits a frame that produces a canonical chunk, then blocks:
+    // once the call's absolute deadline passes, the stream error must surface
+    // only after the preceding event was yielded.
+    let upstream = spawn_upstream(|_| {
+        sse_response_blocks_after(vec![
+            frame(
+                "content_block_start",
+                json!({
+                    "type": "content_block_start",
+                    "index": 0,
+                    "content_block": {"type": "text", "text": ""},
+                }),
+            ),
+            frame(
+                "content_block_delta",
+                json!({
+                    "type": "content_block_delta",
+                    "index": 0,
+                    "delta": {"type": "text_delta", "text": "Hello"},
+                }),
+            ),
+        ])
+    })
+    .await;
+
+    let adapter = adapter_for(
+        &anthropic_provider(format!("http://{}/v1", upstream.addr)),
+        reqwest::Client::new(),
+        REQUEST_TIMEOUT_MS,
+    );
+    let outcome = adapter
+        .chat(&chat_req("claude-x", true))
+        .await
+        .expect("headers arrive within the budget");
+    let mut stream = match outcome {
+        UpstreamOutcome::Stream(s) => s,
+        UpstreamOutcome::Json(_) => panic!("expected Stream outcome"),
+    };
+    let first = tokio::time::timeout(std::time::Duration::from_secs(5), stream.next())
+        .await
+        .expect("first chunk within window")
+        .expect("stream alive")
+        .expect("first chunk yields without error");
+    assert!(
+        first.data.contains(r#""content":"Hello""#),
+        "the chunk before the failure is yielded: {}",
+        first.data
+    );
+    let item = match tokio::time::timeout(std::time::Duration::from_secs(5), stream.next()).await {
+        Ok(Some(item)) => item,
+        Ok(None) => panic!("stream must end after the mid-stream error"),
+        Err(_) => panic!("timed out waiting for the mid-stream error"),
+    };
+    let err = if let Err(e) = item {
+        e
+    } else {
+        panic!("expected the stream to end with the mid-stream error");
+    };
+    assert_eq!(err.status(), 504);
+    assert!(err.is_fallbackable());
 }

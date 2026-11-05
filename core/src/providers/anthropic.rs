@@ -99,11 +99,14 @@ impl AnthropicAdapter {
         self.error(UpstreamFailure::Http { status, body })
     }
 
-    /// Replay an Anthropic SSE response as canonical events. The upstream's
-    /// `message_stop` ends the stream (no `[DONE]` counterpart); `a2o_stream`
-    /// appends the canonical `[DONE]` sentinel, which is stripped here — the
-    /// caller re-appends it. Every chunk read is bounded by the call's absolute
-    /// `deadline`, so the stream as a whole cannot outlive
+    /// Replay an Anthropic SSE response as canonical events. Each newly
+    /// parsed upstream event is folded into the translator over the accumulated
+    /// event prefix and only the new suffix is yielded, so the first canonical
+    /// chunk reaches the caller as soon as it is produced (no batching until
+    /// the upstream closes). The upstream's `message_stop` ends the stream; the
+    /// translator appends the canonical `[DONE]` sentinel, which is never
+    /// forwarded — the caller re-appends it. Every chunk read is bounded by the
+    /// call's absolute `deadline`, so the stream as a whole cannot outlive
     /// `request_timeout_ms`: a stalled or trickling upstream is cut off with
     /// `Timeout` (504) once the total budget is exhausted.
     fn stream_events(
@@ -117,51 +120,79 @@ impl AnthropicAdapter {
         let stream = async_stream::stream! {
             let mut parser = SseParser::new();
             let mut events: Vec<SseEvent> = Vec::new();
+            // Canonical events already yielded to the consumer; the translator
+            // is an ordered fold, so the output for a prefix of the input is a
+            // prefix of the output for the full input.
+            let mut consumed: usize = 0;
             let mut bytes = Box::pin(resp.bytes_stream());
+            let mut failure: Option<UpstreamError> = None;
+
             'outer: loop {
                 let chunk = match tokio::time::timeout_at(deadline, bytes.next()).await {
-                    Ok(Some(Ok(bytes))) => bytes,
+                    Ok(Some(Ok(bytes))) => Some(bytes),
                     Ok(Some(Err(e))) => {
-                        yield Err(UpstreamError {
+                        failure = Some(UpstreamError {
                             provider: provider.clone(),
                             failure: UpstreamFailure::Network(e.to_string()),
                         });
                         break 'outer;
                     }
-                    Ok(None) => {
-                        // End of body: flush a final event that arrived
-                        // without a trailing blank line.
-                        for event in parser.finish() {
-                            if event.data == "[DONE]" {
-                                break 'outer;
-                            }
-                            events.push(event);
-                        }
-                        break 'outer;
-                    }
+                    Ok(None) => None,
                     Err(_) => {
-                        yield Err(UpstreamError {
+                        failure = Some(UpstreamError {
                             provider: provider.clone(),
                             failure: UpstreamFailure::Timeout,
                         });
                         break 'outer;
                     }
                 };
-                for event in parser.push(&chunk) {
+                let finished = chunk.is_none();
+                let drained: Vec<SseEvent> = if finished {
+                    parser.finish()
+                } else {
+                    parser.push(chunk.as_deref().unwrap_or(&[]))
+                };
+                for event in drained {
                     if event.data == "[DONE]" {
-                        // Terminal sentinel: end the stream without
-                        // forwarding it.
                         break 'outer;
                     }
                     events.push(event);
+                    // Incremental translation: re-run the fold over the
+                    // accumulated prefix and emit only the new suffix.
+                    let out = a2o_stream(events.clone(), &model);
+                    let mut produced: usize = 0;
+                    for ev in out {
+                        if ev.data == "[DONE]" {
+                            break;
+                        }
+                        produced += 1;
+                        if produced > consumed {
+                            yield Ok(ev);
+                        }
+                    }
+                    if produced < consumed {
+                        // The fold must preserve prefixes; a smaller emitted
+                        // count means a bug — surface it, never re-emit.
+                        failure = Some(UpstreamError {
+                            provider: provider.clone(),
+                            failure: UpstreamFailure::Network(
+                                "anthropic stream translation lost events".to_string(),
+                            ),
+                        });
+                        break 'outer;
+                    }
+                    consumed = produced;
+                }
+                if finished {
+                    break 'outer;
                 }
             }
-            for event in a2o_stream(events.clone(), &model) {
-                if event.data == "[DONE]" {
-                    // The caller re-appends the sentinel.
-                    break;
-                }
-                yield Ok(event);
+
+            if let Some(err) = failure {
+                // Every event that arrived before the failure was already
+                // translated and yielded inline; surface the error now and end
+                // the stream (no batch replay after an error).
+                yield Err(err);
             }
         };
         stream.boxed()
