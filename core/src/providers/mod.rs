@@ -59,6 +59,17 @@ pub enum UpstreamOutcome {
     Stream(futures_util::stream::BoxStream<'static, Result<SseEvent, UpstreamError>>),
 }
 
+impl std::fmt::Debug for UpstreamOutcome {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            UpstreamOutcome::Json(value) => {
+                f.debug_tuple("UpstreamOutcome::Json").field(value).finish()
+            }
+            UpstreamOutcome::Stream(_) => f.write_str("UpstreamOutcome::Stream(..)"),
+        }
+    }
+}
+
 /// One upstream wire protocol, as the routing engine sees it.
 #[async_trait::async_trait]
 pub trait ProviderAdapter: Send + Sync {
