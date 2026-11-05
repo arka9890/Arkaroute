@@ -80,8 +80,10 @@ pub fn adapter_for(
             client,
             request_timeout_ms,
         )),
-        // Replaced by the Anthropic adapter in Task 9; no test constructs an
-        // Anthropic provider until then.
-        ProviderKind::Anthropic => todo!("Anthropic adapter lands in Task 9"),
+        ProviderKind::Anthropic => Box::new(anthropic::AnthropicAdapter::new(
+            cfg,
+            client,
+            request_timeout_ms,
+        )),
     }
 }
