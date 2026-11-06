@@ -13,7 +13,7 @@
 ## Global Constraints
 
 - Crate lives at `core/`, package name `omniroute-core`, binary name `omniroute`, edition 2021.
-- **TLS = rustls only.** `reqwest` is built with `default-features = false, features = ["json", "stream", "rustls-tls", "http2"]`. Never add openssl/native-tls (Android has no OpenSSL).
+- **TLS = rustls only.** `reqwest` is built with `default-features = false, features = ["json", "stream", "rustls", "http2"]` (reqwest 0.13 names the feature `rustls`, not `rustls-tls`). Never add openssl/native-tls (Android has no OpenSSL).
 - Defaults: `bind = "127.0.0.1"`, `port = 20128`, `lan_enabled = false`.
 - **Auth rule (exact):** if `gateway_keys` is non-empty, a valid `Authorization: Bearer <key>` is required on `/v1/*` and `/health` **regardless of peer**. If `gateway_keys` is empty, those routes are allowed **only** from a loopback peer, otherwise 401. `/dashboard/*` is always allowed from loopback; from a non-loopback peer it follows the same rule as `/v1/*`. `GatewayConfig::validate()` errors when `lan_enabled && gateway_keys.is_empty()`.
 - Canonical internal format = OpenAI chat completion. Both public endpoints exist: `POST /v1/chat/completions` and `POST /v1/messages`.
@@ -92,7 +92,7 @@ Expected: FAIL — unresolved `omniroute_core` (crate does not exist yet).
 - [ ] **Step 3: Create `core/Cargo.toml` and `core/src/lib.rs`**
 
 `Cargo.toml`: name `omniroute-core`, version `0.1.0`, edition `2021`, `[lib] name = "omniroute_core"`, `[[bin]] name = "omniroute" path = "src/main.rs"`.
-Dependencies (pinned): `axum = "0.8"`, `tokio = { version = "1", features = ["full"] }`, `reqwest = { version = "0.13", default-features = false, features = ["json", "stream", "rustls-tls", "http2"] }`, `serde = { version = "1", features = ["derive"] }`, `serde_json = "1"`, `async-trait = "0.1"`, `async-stream = "0.3"`, `futures-util = "0.3"`, `thiserror = "2"`, `tracing = "0.1"`, `tracing-subscriber = { version = "0.3", features = ["env-filter"] }`, `rust-embed = "8"`, `bytes = "1"`.
+Dependencies (pinned): `axum = "0.8"`, `tokio = { version = "1", features = ["full"] }`, `reqwest = { version = "0.13", default-features = false, features = ["json", "stream", "rustls", "http2"] }`, `serde = { version = "1", features = ["derive"] }`, `serde_json = "1"`, `async-trait = "0.1"`, `async-stream = "0.3"`, `futures-util = "0.3"`, `thiserror = "2"`, `tracing = "0.1"`, `tracing-subscriber = { version = "0.3", features = ["env-filter"] }`, `rust-embed = "8"`, `bytes = "1"`.
 `lib.rs`: `pub mod …` for every module in File Structure (empty stub files so the tree compiles), plus `pub const VERSION: &str = env!("CARGO_PKG_VERSION");`.
 `main.rs`: prints `omniroute {VERSION}` for now.
 
@@ -419,7 +419,7 @@ pub enum UpstreamOutcome {
 pub trait ProviderAdapter: Send + Sync {
     async fn chat(&self, req: &ChatCompletionRequest) -> Result<UpstreamOutcome, UpstreamError>;
 }
-pub fn adapter_for(cfg: &ProviderConfig, client: reqwest::Client) -> Box<dyn ProviderAdapter>;
+pub fn adapter_for(cfg: &ProviderConfig, client: reqwest::Client, request_timeout_ms: u64) -> Box<dyn ProviderAdapter>;
 ```
 `openai_compat` posts to `{base_url}/chat/completions` with `Authorization: Bearer {api_key}`, `Content-Type: application/json`.
 
@@ -481,7 +481,7 @@ pub fn a2o_response(body: serde_json::Value, model: &str) -> serde_json::Value;
 pub fn a2o_stream(events: Vec<crate::sse::SseEvent>, model: &str)
     -> Vec<crate::sse::SseEvent>;   // Anthropic events → canonical chunks + [DONE]
 pub fn o2a_stream(events: Vec<crate::sse::SseEvent>, model: &str)
-    -> Vec<crate::sse::SseEvent>;   // canonical chunks → Anthropic events (used by Task 11)
+    -> Vec<crate::sse::SseEvent>;   // canonical chunks → Anthropic events (used by Task 12)
 ```
 (Both stream functions take a `Vec` for testability; the adapters wrap them over an async stream with the same logic per event — see Step 3.)
 
@@ -649,6 +649,7 @@ git add core/src/routing.rs core/tests/routing_test.rs && git commit -m "feat(co
 #[tokio::test] async fn stream_returns_event_stream_with_done();   // content-type text/event-stream, last frame data: [DONE]
 #[tokio::test] async fn unknown_model_is_404_openai_error_shape(); // {"error":{"message":..,"type":"invalid_request_error"}}
 #[tokio::test] async fn all_providers_failed_is_502();             // combo both 429 → 502, error.type "server_error"
+#[tokio::test] async fn health_requires_key_when_keys_configured(); // Global Constraints: /health is under the same auth rule as /v1/*
 #[tokio::test] async fn stalled_upstream_stream_times_out();       // Review Focus #1: cfg.stream_idle_timeout_ms=200, upstream sends 1 chunk then sleeps 2s
                                                                     // → client stream ends with an error frame (no [DONE]) well before the sleep finishes,
                                                                     // and the combo's second step was never called (hit count 0)
@@ -666,7 +667,7 @@ Every handler: extract `ConnectInfo<SocketAddr>`, `peer_is_loopback = addr.is_lo
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `cargo test --manifest-path core/Cargo.toml --test chat_endpoint_test`
-Expected: PASS (7 tests).
+Expected: PASS (8 tests).
 
 - [ ] **Step 5: Commit**
 
@@ -703,7 +704,7 @@ Expected: FAIL — route missing.
 
 - [ ] **Step 3: Implement inbound mapping and handler**
 
-`inbound_messages`: Anthropic body (`model`, `system`, `messages`, `max_tokens`, `tools`, `tool_choice`, `stream`, `temperature`, `top_p`) → canonical `ChatCompletionRequest` (system string → first system message; `tool_choice` `{"type":"auto"|"any"|"tool","name":…}` → OpenAI `auto`/`required`/`{"type":"function","function":{"name":…}}`; Anthropic `thinking` in `extra`). Non-stream: canonical JSON → `a2o_response`. Stream: canonical events → `o2a_stream` → frames, no `[DONE]`.
+`inbound_messages`: Anthropic body (`model`, `system`, `messages`, `max_tokens`, `tools`, `tool_choice`, `stream`, `temperature`, `top_p`) → canonical `ChatCompletionRequest` (system string → first system message; `tool_choice` `{"type":"auto"|"any"|"tool","name":…}` → OpenAI `auto`/`required`/`{"type":"function","function":{"name":…}}`; Anthropic `thinking` in `extra`). Non-stream: canonical upstream JSON → **new** `pub fn o2a_response(body: serde_json::Value, model: &str) -> serde_json::Value` (canonical OpenAI → Anthropic message shape; the inverse of Task 8's `a2o_response`) added in this task's `translate/mod.rs` change. Stream: canonical events → `o2a_stream` → frames, no `[DONE]`.
 
 - [ ] **Step 4: Run test to verify it passes**
 
@@ -743,7 +744,7 @@ Expected: FAIL — route missing.
 
 - [ ] **Step 3: Implement `dashboard.rs`**
 
-`#[derive(RustEmbed)] #[folder = "../../dashboard/"]` (path relative to `core/src/`). Handler: `/dashboard` → redirect to `/dashboard/`; `/dashboard/*` → look up asset, set `Content-Type` from extension, `Cache-Control: no-cache` for `.html`. Apply auth: loopback always allowed, otherwise `authorize`.
+`#[derive(RustEmbed)] #[folder = "../dashboard/"]` (path is resolved against the crate manifest `core/`, NOT `core/src/` — verified against rust-embed-impl source; `../../dashboard/` would escape the repo. Controller-corrected). Handler: `/dashboard` → redirect to `/dashboard/`; also route `/dashboard/` explicitly (axum's `{*path}` does not match the empty path); `/dashboard/*` → look up asset, set `Content-Type` from extension, `Cache-Control: no-cache` for `.html`. Apply auth: loopback always allowed, otherwise `authorize`.
 
 - [ ] **Step 4: Run test to verify it passes**
 
