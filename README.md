@@ -83,7 +83,7 @@ curl -s http://127.0.0.1:20128/v1/messages \
 ## Aturan autentikasi
 
 - Jika `gateway_keys` tidak kosong, setiap request ke `/v1/*` dan `/health` (serta `/dashboard/*` dari peer non-loopback) wajib membawa `Authorization: Bearer <key>` yang valid, terlepas dari peer.
-- Jika `gateway_keys` kosong, route tersebut hanya diizinkan dari peer loopback; selain itu `401`.
+- Jika `gateway_keys` kosong, route tersebut hanya diizinkan dari peer loopback; selain itu `403`.
 - `/dashboard/*` selalu diizinkan dari loopback; dari peer non-loopback mengikuti aturan yang sama.
 - `GatewayConfig::validate()` menolak konfigurasi dengan `lan_enabled = true` tetapi `gateway_keys` kosong.
 
