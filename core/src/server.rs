@@ -279,31 +279,17 @@ fn make_anthropic_stream(
         let idle = Duration::from_millis(idle_ms);
         let mut events: Vec<crate::sse::SseEvent> = Vec::new();
         let mut consumed: usize = 0;
-        let mut stream_finished = false;
         loop {
             match timeout(idle, src.next()).await {
                 Ok(Some(Ok(ev))) => {
-                    // Detect whether this canonical chunk closes the stream.
-                    if let Ok(v) = serde_json::from_str::<serde_json::Value>(&ev.data) {
-                        if v.get("choices")
-                            .and_then(serde_json::Value::as_array)
-                            .and_then(|c| c.first())
-                            .and_then(|c| c.get("finish_reason"))
-                            .and_then(serde_json::Value::as_str)
-                            .is_some()
-                        {
-                            stream_finished = true;
-                        }
-                    }
                     events.push(ev);
 
                     let out = crate::translate::stream::o2a_stream(events.clone(), &model);
                     let trailer = trailing_finalization_count(&out);
-                    let emit_count = if stream_finished {
-                        out.len()
-                    } else {
-                        out.len().saturating_sub(trailer)
-                    };
+                    // Defer the finalization trailer (message_delta + message_stop)
+                    // until stream end so usage chunks that arrive after the
+                    // finish chunk are folded into message_delta.
+                    let emit_count = out.len().saturating_sub(trailer);
 
                     if emit_count < consumed {
                         // Fold is not prefix-stable: surface an error rather than

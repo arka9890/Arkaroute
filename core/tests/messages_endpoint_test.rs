@@ -360,3 +360,44 @@ async fn messages_stream_midstream_failure_emits_error_frame() {
     assert!(!text.contains("message_stop"), "no clean message_stop after failure: {text}");
     ghandle.abort();
 }
+
+
+#[tokio::test]
+async fn messages_stream_usage_reflected_in_message_delta() {
+    let upstream = spawn_upstream(|_| {
+        Response::builder()
+            .status(StatusCode::OK)
+            .header(header::CONTENT_TYPE, "text/event-stream")
+            .body(Body::from(
+                "data: {\"id\":\"c1\",\"object\":\"chat.completion.chunk\",\"created\":1,\"model\":\"gpt-4o\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"Hel\"},\"finish_reason\":null}]}
+
+\
+                 data: {\"id\":\"c1\",\"object\":\"chat.completion.chunk\",\"created\":1,\"model\":\"gpt-4o\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}
+
+\
+                 data: {\"id\":\"c1\",\"object\":\"chat.completion.chunk\",\"created\":1,\"model\":\"gpt-4o\",\"choices\":[],\"usage\":{\"prompt_tokens\":7,\"completion_tokens\":3}}
+
+\
+                 data: [DONE]
+
+",
+            ))
+            .unwrap()
+    })
+    .await;
+    let mut cfg = gateway(&upstream.base_url(), vec![]);
+    cfg.stream_idle_timeout_ms = 5_000;
+    let (gaddr, ghandle) = spawn(app_state(cfg)).await;
+    let resp = Client::new()
+        .post(format!("http://{gaddr}/v1/messages"))
+        .json(&json!({"model":"openai/gpt-4o","max_tokens":100,"messages":[{"role":"user","content":"hi"}],"stream":true}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let text = resp.text().await.unwrap();
+    assert!(text.contains("\"output_tokens\":3"), "usage must reach message_delta: {text}");
+    assert!(text.contains("message_stop"), "{text}");
+    ghandle.abort();
+    drop(upstream);
+}
