@@ -27,6 +27,7 @@ pub fn build_router(state: AppState) -> Router {
     Router::new()
         .route("/health", get(health_handler))
         .route("/v1/chat/completions", post(chat_completions_handler))
+        .route("/v1/messages", post(messages_handler))
         .route("/v1/models", get(models_handler))
         .with_state(state)
 }
@@ -83,6 +84,25 @@ fn openai_error(status: u16, message: impl Into<String>) -> (StatusCode, Json<se
     (
         StatusCode::from_u16(status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR),
         Json(json!({"error": {"message": message.into(), "type": type_str, "code": code}})),
+    )
+}
+
+fn anthropic_error_type(status: u16) -> &'static str {
+    match status {
+        401 => "authentication_error",
+        403 => "permission_error",
+        404 => "not_found_error",
+        400 => "invalid_request_error",
+        502 | 504 => "api_error",
+        _ if status >= 500 => "api_error",
+        _ => "invalid_request_error",
+    }
+}
+
+fn anthropic_error(status: u16, message: impl Into<String>) -> (StatusCode, Json<serde_json::Value>) {
+    (
+        StatusCode::from_u16(status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR),
+        Json(json!({"type": "error", "error": {"type": anthropic_error_type(status), "message": message.into()}})),
     )
 }
 
@@ -184,6 +204,100 @@ async fn chat_completions_handler(
                 openai_error(status, msg).into_response()
             }
         },
+    }
+}
+
+async fn messages_handler(
+    peer: PeerAddr,
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Response {
+    let cfg = read_cfg(&state);
+    if let Err(e) = authorize(&cfg, &headers, peer.0.map(|a| a.ip().is_loopback()).unwrap_or(false)) {
+        return anthropic_error(e.status(), e.to_string()).into_response();
+    }
+
+    let parsed_value: serde_json::Value = match serde_json::from_slice(&body) {
+        Ok(v) => v,
+        Err(_) => return anthropic_error(400, "invalid request body").into_response(),
+    };
+    let req = match crate::translate::inbound_messages(parsed_value) {
+        Ok(r) => r,
+        Err(_) => return anthropic_error(400, "invalid request body").into_response(),
+    };
+
+    let idle_ms = read_cfg(&state).stream_idle_timeout_ms;
+
+    match execute(&state, req.clone()).await {
+        Ok(outcome) => match outcome.response {
+            providers::UpstreamOutcome::Json(v) => {
+                let translated = crate::translate::o2a_response(v, &req.model);
+                (StatusCode::OK, Json(translated)).into_response()
+            }
+            providers::UpstreamOutcome::Stream(s) => {
+                let stream = make_anthropic_stream(s, idle_ms, req.model.clone());
+                Response::builder()
+                    .status(StatusCode::OK)
+                    .header("content-type", "text/event-stream")
+                    .header("cache-control", "no-cache")
+                    .body(axum::body::Body::from_stream(stream))
+                    .unwrap()
+            }
+        },
+        Err(err) => match err {
+            RouteError::Resolve(crate::routing::ResolveError::UnknownModel(m)) => {
+                anthropic_error(404, format!("The model `{m}` does not exist")).into_response()
+            }
+            RouteError::Resolve(_) => anthropic_error(404, "model not found").into_response(),
+            RouteError::AllFailed(errs) => {
+                let msg = errs
+                    .first()
+                    .map(|e| format!("all providers failed: {}", e.status()))
+                    .unwrap_or_else(|| "all providers failed".to_string());
+                anthropic_error(502, msg).into_response()
+            }
+            RouteError::Upstream(e) => {
+                let status = e.status();
+                let msg = match &e.failure {
+                    providers::UpstreamFailure::Http { body, .. } => body.clone(),
+                    providers::UpstreamFailure::Timeout => "upstream timed out".to_string(),
+                    providers::UpstreamFailure::Network(m) => m.clone(),
+                };
+                anthropic_error(status, msg).into_response()
+            }
+        },
+    }
+}
+
+fn make_anthropic_stream(
+    mut src: futures_util::stream::BoxStream<'static, Result<crate::sse::SseEvent, providers::UpstreamError>>,
+    idle_ms: u64,
+    model: String,
+) -> impl futures_util::Stream<Item = Result<Bytes, std::convert::Infallible>> {
+    async_stream::stream! {
+        let idle = Duration::from_millis(idle_ms);
+        let mut events: Vec<crate::sse::SseEvent> = Vec::new();
+        loop {
+            match timeout(idle, src.next()).await {
+                Ok(Some(Ok(ev))) => {
+                    events.push(ev);
+                }
+                Ok(Some(Err(_))) => {
+                    break;
+                }
+                Ok(None) => {
+                    break;
+                }
+                Err(_) => {
+                    break;
+                }
+            }
+        }
+        let out = crate::translate::stream::o2a_stream(events, &model);
+        for ev in out {
+            yield Ok(Bytes::from(format_event(&ev)));
+        }
     }
 }
 

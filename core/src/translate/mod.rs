@@ -176,6 +176,94 @@ pub fn a2o_response(body: Value, model: &str) -> Value {
     })
 }
 
+/// Translate a canonical OpenAI `/v1/chat/completions` response into an
+/// Anthropic `/v1/messages` response body — the inverse of [`a2o_response`].
+pub fn o2a_response(body: Value, model: &str) -> Value {
+    let id = body.get("id").and_then(Value::as_str).unwrap_or("msg_0").to_string();
+    let choices = body.get("choices").and_then(Value::as_array).cloned().unwrap_or_default();
+    let choice = choices.first();
+    let message = choice.and_then(|c| c.get("message")).cloned().unwrap_or(Value::Null);
+    let finish_reason = choice
+        .and_then(|c| c.get("finish_reason"))
+        .and_then(Value::as_str);
+
+    let mut content: Vec<Value> = Vec::new();
+    // Text content.
+    match message.get("content") {
+        Some(Value::String(s)) if !s.is_empty() => {
+            content.push(json!({"type": "text", "text": s}));
+        }
+        Some(Value::Array(parts)) => {
+            for part in parts {
+                if let Some(text) = part.get("text").and_then(Value::as_str) {
+                    if !text.is_empty() {
+                        content.push(json!({"type": "text", "text": text}));
+                    }
+                }
+            }
+        }
+        _ => {}
+    }
+    // Tool calls → tool_use blocks.
+    if let Some(calls) = message.get("tool_calls").and_then(Value::as_array) {
+        for call in calls {
+            let tool_id = call.get("id").and_then(Value::as_str).unwrap_or("").to_string();
+            let name = call
+                .get("function")
+                .and_then(|f| f.get("name"))
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_string();
+            let args_str = call
+                .get("function")
+                .and_then(|f| f.get("arguments"))
+                .and_then(Value::as_str)
+                .unwrap_or("");
+            let input: Value = if args_str.is_empty() {
+                json!({})
+            } else {
+                serde_json::from_str(args_str).unwrap_or_else(|_| json!({}))
+            };
+            content.push(json!({
+                "type": "tool_use",
+                "id": tool_id,
+                "name": name,
+                "input": input
+            }));
+        }
+    }
+
+    let stop_reason = match finish_reason {
+        Some("tool_calls") => "tool_use",
+        Some("length") => "max_tokens",
+        _ => "end_turn",
+    };
+
+    let usage = body.get("usage").cloned().unwrap_or(Value::Null);
+    let input_tokens = usage
+        .get("prompt_tokens")
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    let output_tokens = usage
+        .get("completion_tokens")
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+
+    json!({
+        "id": id,
+        "type": "message",
+        "role": "assistant",
+        "model": model,
+        "content": content,
+        "stop_reason": stop_reason,
+        "stop_sequence": null,
+        "usage": {
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens
+        }
+    })
+}
+
 /// Anthropic `stop_reason` → canonical `finish_reason`. Unknown reasons
 /// degrade to `stop`, which every OpenAI client understands.
 pub(crate) fn canonical_finish_reason(stop_reason: Option<&str>) -> &'static str {
@@ -275,4 +363,239 @@ fn map_tool_choice(choice: &Value) -> Value {
 /// structs cannot fail, so a failure would be a programming error.
 fn to_value<T: serde::Serialize>(value: T) -> Value {
     serde_json::to_value(value).expect("anthropic wire types always serialize")
+}
+
+/// Translate an Anthropic `/v1/messages` body into a canonical
+/// `ChatCompletionRequest` so the gateway can route it like any other.
+pub fn inbound_messages(body: Value) -> Result<ChatCompletionRequest, serde_json::Error> {
+    let model = body
+        .get("model")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_string();
+
+    let mut messages: Vec<Value> = Vec::new();
+
+    // `system` → first system message.
+    if let Some(system) = body.get("system") {
+        if let Some(text) = system_to_text(system) {
+            messages.push(json!({"role": "system", "content": text}));
+        }
+    }
+
+    if let Some(arr) = body.get("messages").and_then(Value::as_array) {
+        for m in arr {
+            let role = m.get("role").and_then(Value::as_str).unwrap_or("user");
+            let content = m.get("content").cloned().unwrap_or(Value::Null);
+            match role {
+                "assistant" => {
+                    let (text_content, tool_calls) = convert_assistant_content(&content);
+                    let mut msg = json!({"role": "assistant"});
+                    if let Some(c) = text_content {
+                        msg["content"] = c;
+                    }
+                    if !tool_calls.is_empty() {
+                        msg["tool_calls"] = Value::Array(tool_calls);
+                    }
+                    messages.push(msg);
+                }
+                "user" => {
+                    match &content {
+                        Value::String(s) => {
+                            messages.push(json!({"role": "user", "content": s}));
+                        }
+                        Value::Array(blocks) => {
+                            let mut text_blocks: Vec<Value> = Vec::new();
+                            let mut other_blocks: Vec<Value> = Vec::new();
+                            let mut tool_results: Vec<Value> = Vec::new();
+                            for b in blocks {
+                                let kind = b.get("type").and_then(Value::as_str).unwrap_or("");
+                                if kind == "tool_result" {
+                                    tool_results.push(b.clone());
+                                } else if kind == "text" {
+                                    text_blocks.push(b.clone());
+                                } else {
+                                    other_blocks.push(b.clone());
+                                }
+                            }
+                            let mut user_blocks: Vec<Value> = Vec::new();
+                            user_blocks.extend(text_blocks);
+                            user_blocks.extend(other_blocks);
+                            if !user_blocks.is_empty() {
+                                if user_blocks.len() == 1
+                                    && user_blocks[0].get("type") == Some(&json!("text"))
+                                {
+                                    if let Some(t) = user_blocks[0].get("text").and_then(Value::as_str) {
+                                        messages.push(json!({"role": "user", "content": t}));
+                                    } else {
+                                        messages.push(json!({"role": "user", "content": user_blocks}));
+                                    }
+                                } else {
+                                    messages.push(json!({"role": "user", "content": user_blocks}));
+                                }
+                            }
+                            for tr in tool_results {
+                                let tool_call_id = tr
+                                    .get("tool_use_id")
+                                    .and_then(Value::as_str)
+                                    .unwrap_or("")
+                                    .to_string();
+                                let c = tr.get("content").cloned().unwrap_or(Value::String(String::new()));
+                                let content_str = content_to_string(&c);
+                                messages.push(json!({
+                                    "role": "tool",
+                                    "tool_call_id": tool_call_id,
+                                    "content": content_str
+                                }));
+                            }
+                        }
+                        _ => {
+                            messages.push(json!({"role": "user", "content": content}));
+                        }
+                    }
+                }
+                other => {
+                    messages.push(json!({"role": other, "content": content}));
+                }
+            }
+        }
+    }
+
+    let mut req = json!({
+        "model": model,
+        "messages": messages,
+        "stream": body.get("stream").and_then(Value::as_bool).unwrap_or(false),
+    });
+    if let Some(mt) = body.get("max_tokens") {
+        req["max_tokens"] = mt.clone();
+    }
+    if let Some(t) = body.get("temperature") {
+        req["temperature"] = t.clone();
+    }
+    if let Some(p) = body.get("top_p") {
+        req["top_p"] = p.clone();
+    }
+    if let Some(tools) = body.get("tools").and_then(Value::as_array) {
+        let out: Vec<Value> = tools
+            .iter()
+            .map(|t| {
+                json!({
+                    "type": "function",
+                    "function": {
+                        "name": t.get("name").cloned().unwrap_or(Value::Null),
+                        "description": t.get("description").cloned(),
+                        "parameters": t.get("input_schema").cloned().unwrap_or_else(|| json!({"type": "object"}))
+                    }
+                })
+            })
+            .collect();
+        req["tools"] = Value::Array(out);
+    }
+    if let Some(tc) = body.get("tool_choice") {
+        req["tool_choice"] = convert_anthropic_tool_choice(tc);
+    }
+    if let Some(thinking) = body.get("thinking") {
+        req["thinking"] = thinking.clone();
+    }
+
+    ChatCompletionRequest::from_value(req)
+}
+
+fn system_to_text(system: &Value) -> Option<String> {
+    match system {
+        Value::String(s) => Some(s.clone()),
+        Value::Array(blocks) => {
+            let texts: Vec<&str> = blocks
+                .iter()
+                .filter_map(|b| b.get("text").and_then(Value::as_str))
+                .collect();
+            if texts.is_empty() {
+                None
+            } else {
+                Some(texts.join("\n"))
+            }
+        }
+        _ => None,
+    }
+}
+
+fn convert_assistant_content(content: &Value) -> (Option<Value>, Vec<Value>) {
+    match content {
+        Value::String(s) => {
+            if s.is_empty() {
+                (None, Vec::new())
+            } else {
+                (Some(json!(s)), Vec::new())
+            }
+        }
+        Value::Array(blocks) => {
+            let mut text_parts: Vec<String> = Vec::new();
+            let mut tool_calls: Vec<Value> = Vec::new();
+            for b in blocks {
+                let kind = b.get("type").and_then(Value::as_str).unwrap_or("");
+                match kind {
+                    "text" => {
+                        if let Some(t) = b.get("text").and_then(Value::as_str) {
+                            if !t.is_empty() {
+                                text_parts.push(t.to_string());
+                            }
+                        }
+                    }
+                    "tool_use" => {
+                        let id = b.get("id").cloned().unwrap_or(Value::Null);
+                        let name = b
+                            .get("name")
+                            .and_then(Value::as_str)
+                            .unwrap_or("")
+                            .to_string();
+                        let input = b.get("input").cloned().unwrap_or_else(|| json!({}));
+                        tool_calls.push(json!({
+                            "id": id,
+                            "type": "function",
+                            "function": {
+                                "name": name,
+                                "arguments": input.to_string()
+                            }
+                        }));
+                    }
+                    _ => {}
+                }
+            }
+            let text_content = if text_parts.is_empty() {
+                None
+            } else {
+                Some(json!(text_parts.join("")))
+            };
+            (text_content, tool_calls)
+        }
+        _ => (None, Vec::new()),
+    }
+}
+
+fn content_to_string(v: &Value) -> String {
+    match v {
+        Value::String(s) => s.clone(),
+        Value::Array(blocks) => blocks
+            .iter()
+            .filter_map(|b| b.get("text").and_then(Value::as_str))
+            .collect::<Vec<_>>()
+            .join(""),
+        _ => v.to_string(),
+    }
+}
+
+fn convert_anthropic_tool_choice(tc: &Value) -> Value {
+    if let Some(t) = tc.get("type").and_then(Value::as_str) {
+        match t {
+            "auto" => return json!("auto"),
+            "any" => return json!("required"),
+            "tool" => {
+                if let Some(name) = tc.get("name").and_then(Value::as_str) {
+                    return json!({"type": "function", "function": {"name": name}});
+                }
+            }
+            _ => {}
+        }
+    }
+    tc.clone()
 }
