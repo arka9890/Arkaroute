@@ -744,7 +744,7 @@ Expected: FAIL — route missing.
 
 - [ ] **Step 3: Implement `dashboard.rs`**
 
-`#[derive(RustEmbed)] #[folder = "../../dashboard/"]` (path relative to `core/src/`). Handler: `/dashboard` → redirect to `/dashboard/`; `/dashboard/*` → look up asset, set `Content-Type` from extension, `Cache-Control: no-cache` for `.html`. Apply auth: loopback always allowed, otherwise `authorize`.
+`#[derive(RustEmbed)] #[folder = "../dashboard/"]` (path is resolved against the crate manifest `core/`, NOT `core/src/` — verified against rust-embed-impl source; `../../dashboard/` would escape the repo. Controller-corrected). Handler: `/dashboard` → redirect to `/dashboard/`; also route `/dashboard/` explicitly (axum's `{*path}` does not match the empty path); `/dashboard/*` → look up asset, set `Content-Type` from extension, `Cache-Control: no-cache` for `.html`. Apply auth: loopback always allowed, otherwise `authorize`.
 
 - [ ] **Step 4: Run test to verify it passes**
 
