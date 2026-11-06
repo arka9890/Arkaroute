@@ -12,17 +12,18 @@
 //! wrapped so the first yielded item commits the attempt, and a failure after
 //! that just flows through to the caller.
 
+use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 use futures_util::stream::BoxStream;
 use futures_util::{stream, StreamExt};
 use serde_json::Value;
 
-use crate::config::GatewayConfig;
+use crate::config::{GatewayConfig, ProviderConfig};
 use crate::protocol::ChatCompletionRequest;
 use crate::providers::{adapter_for, UpstreamError, UpstreamFailure, UpstreamOutcome};
 use crate::sse::SseEvent;
-use crate::state::{AppState, LogLevel};
+use crate::state::{AppState, LogLevel, Stats};
 
 /// A resolved model: a fallback combo chain or a direct provider/model pair.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -83,6 +84,48 @@ impl From<ResolveError> for RouteError {
     }
 }
 
+/// Latest token counts observed in yielded stream events (the usage chunk
+/// arrives last on the wire).
+#[derive(Debug, Default)]
+struct UsageCell {
+    tokens: Option<(u64, u64)>,
+}
+
+impl UsageCell {
+    fn write(&mut self, tokens: Option<(u64, u64)>) {
+        self.tokens = tokens;
+    }
+
+    fn read(&self) -> (u64, u64) {
+        self.tokens.unwrap_or((0, 0))
+    }
+}
+
+/// Lifecycle phase of a committed stream.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Phase {
+    /// Yield the first event pulled before committing, then stream the rest.
+    First,
+    /// Pull the next event from the source stream.
+    Active,
+    /// The stream errored after the first byte.
+    Failed,
+    /// The stream ended normally.
+    Done,
+}
+
+/// State of the committed-stream wrapper.
+struct StreamState {
+    phase: Phase,
+    first: Option<SseEvent>,
+    inner: BoxStream<'static, Result<SseEvent, UpstreamError>>,
+    usage: Arc<Mutex<UsageCell>>,
+    provider: String,
+    stats: Arc<Stats>,
+    model: String,
+    started: Instant,
+}
+
 /// Resolve a client-facing model string into a [`ResolvedModel`].
 pub fn resolve_model(model: &str, cfg: &GatewayConfig) -> Result<ResolvedModel, ResolveError> {
     // `combo/<name>` prefix wins: it names an explicit fallback chain.
@@ -135,23 +178,100 @@ pub fn plan(model: &str, cfg: &GatewayConfig) -> Result<Vec<Attempt>, ResolveErr
     }
 }
 
+/// Pull one event from a committed stream, capturing usage; end the stream
+/// with the outcome recorded.
+async fn unfold_step(
+    mut st: StreamState,
+) -> Option<(Result<SseEvent, UpstreamError>, StreamState)> {
+    if st.phase == Phase::Done || st.phase == Phase::Failed {
+        return None;
+    }
+    let item = match st.phase {
+        Phase::First => {
+            st.phase = Phase::Active;
+            Some(Ok(st.first.take().expect("first event pending")))
+        }
+        Phase::Active => st.inner.next().await,
+        Phase::Done | Phase::Failed => return None,
+    };
+    let (item, phase) = match item {
+        Some(Ok(ev)) => {
+            if let Some(tokens) = usage_from_event(&ev) {
+                st.usage.lock().expect("usage lock").write(Some(tokens));
+            }
+            (Some(Ok(ev)), Phase::Active)
+        }
+        Some(Err(e)) => {
+            st.phase = Phase::Failed;
+            st.stats.log(
+                LogLevel::Warn,
+                format!(
+                    "provider {} stream failed after first byte: status {}",
+                    st.provider,
+                    e.status()
+                ),
+            );
+            st.stats
+                .record_failure(&st.provider, &format!("status {}", e.status()));
+            (Some(Err(e)), Phase::Failed)
+        }
+        None => {
+            st.phase = Phase::Done;
+            (None, Phase::Done)
+        }
+    };
+    if phase == Phase::Done {
+        let tokens = st.usage.lock().expect("usage lock").read();
+        st.stats.record_success(
+            &st.provider,
+            tokens.0,
+            tokens.1,
+            st.started.elapsed().as_millis() as u64,
+        );
+    }
+    let next = StreamState {
+        phase,
+        first: None,
+        inner: st.inner,
+        usage: st.usage,
+        provider: st.provider.clone(),
+        stats: st.stats.clone(),
+        model: st.model.clone(),
+        started: st.started,
+    };
+    item.map(|i| (i, next))
+}
+
 /// Run the fallback chain for one request against the gateway state.
 pub async fn execute(
     state: &AppState,
     req: ChatCompletionRequest,
 ) -> Result<RouteOutcome, RouteError> {
-    let cfg = read_gateway_config(state);
-    let attempts = plan(&req.model, &cfg)?;
+    let (attempts, request_timeout_ms, providers) = {
+        let cfg = read_gateway_config(state);
+        let attempts = plan(&req.model, &cfg)?;
+        // Clone what the attempt loop needs out of the config before the first
+        // `.await`: the `RwLockReadGuard` is not `Send`, and the future handed to
+        // the Task 11 handler must be.
+        let request_timeout_ms = cfg.request_timeout_ms;
+        let providers: std::collections::HashMap<String, ProviderConfig> = cfg
+            .providers
+            .iter()
+            .map(|p| (p.id.clone(), p.clone()))
+            .collect();
+        (attempts, request_timeout_ms, providers)
+    };
+
     let started = Instant::now();
     let mut tried: Vec<String> = Vec::new();
     let mut failures: Vec<UpstreamError> = Vec::new();
 
     for attempt in attempts {
         tried.push(attempt.provider.clone());
-        let provider_cfg = cfg
-            .provider(&attempt.provider)
+        let provider_cfg = providers
+            .get(&attempt.provider)
             .ok_or(ResolveError::UnknownProvider(attempt.provider.clone()))?;
-        let adapter = adapter_for(provider_cfg, state.client.clone(), cfg.request_timeout_ms);
+        let adapter = adapter_for(provider_cfg, state.client.clone(), request_timeout_ms);
         let outcome = adapter.chat(&req).await;
         match outcome {
             Err(e) => {
@@ -190,35 +310,6 @@ pub async fn execute(
                 let mut src: BoxStream<'static, Result<SseEvent, UpstreamError>> = s;
                 let first = src.next().await;
                 match first {
-                    Some(Ok(first_ev)) => {
-                        // First byte reached the caller: the attempt is committed,
-                        // the stream continues after this item and later errors
-                        // just surface to the client (no fallback).
-                        let (tokens_in, tokens_out) = usage_from_event(&first_ev);
-                        let stream =
-                            stream::once(async move { Ok::<SseEvent, UpstreamError>(first_ev) })
-                                .chain(src)
-                                .boxed();
-                        state.stats.log(
-                            LogLevel::Info,
-                            format!(
-                                "provider {} served model {}",
-                                attempt.provider, attempt.model
-                            ),
-                        );
-                        state.stats.record_success(
-                            &attempt.provider,
-                            tokens_in,
-                            tokens_out,
-                            started.elapsed().as_millis() as u64,
-                        );
-                        return Ok(RouteOutcome {
-                            response: UpstreamOutcome::Stream(stream),
-                            provider: attempt.provider,
-                            model: attempt.model,
-                            attempts: tried,
-                        });
-                    }
                     Some(Err(e)) => {
                         // Error before the first byte: fallback may apply.
                         record_failure(state, &e);
@@ -227,6 +318,35 @@ pub async fn execute(
                         }
                         failures.push(e);
                         continue;
+                    }
+                    Some(Ok(first_ev)) => {
+                        // First byte reached the caller: the attempt is committed.
+                        // The wrapper captures usage from every yielded event and
+                        // records the attempt's success exactly once when the stream
+                        // ends normally (final usage). A mid-stream error is surfaced
+                        // through the stream and recorded as a failure.
+                        let usage = Arc::new(Mutex::new(UsageCell::default()));
+                        let stream: BoxStream<'static, Result<SseEvent, UpstreamError>> =
+                            stream::unfold(
+                                StreamState {
+                                    phase: Phase::First,
+                                    first: Some(first_ev),
+                                    inner: src,
+                                    usage,
+                                    provider: attempt.provider.clone(),
+                                    stats: state.stats.clone(),
+                                    model: attempt.model.clone(),
+                                    started,
+                                },
+                                unfold_step,
+                            )
+                            .boxed();
+                        return Ok(RouteOutcome {
+                            response: UpstreamOutcome::Stream(stream),
+                            provider: attempt.provider,
+                            model: attempt.model,
+                            attempts: tried,
+                        });
                     }
                     None => {
                         // The upstream closed before yielding anything.
@@ -284,10 +404,24 @@ fn usage_from_json(value: &Value) -> (u64, u64) {
     )
 }
 
-/// Token counts of a stream event payload, from its JSON body `usage`.
-fn usage_from_event(ev: &SseEvent) -> (u64, u64) {
+/// Token counts of a stream event payload, from its JSON body `usage`. Returns
+/// `None` when the event carries no usage (e.g. a content chunk).
+fn usage_from_event(ev: &SseEvent) -> Option<(u64, u64)> {
     let Ok(value) = serde_json::from_str::<Value>(&ev.data) else {
-        return (0, 0);
+        return None;
     };
-    usage_from_json(&value)
+    let usage = value.get("usage").cloned().unwrap_or(Value::Null);
+    if usage.is_null() {
+        return None;
+    }
+    Some((
+        usage
+            .get("prompt_tokens")
+            .and_then(Value::as_u64)
+            .unwrap_or(0),
+        usage
+            .get("completion_tokens")
+            .and_then(Value::as_u64)
+            .unwrap_or(0),
+    ))
 }

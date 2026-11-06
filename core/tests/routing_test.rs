@@ -1,6 +1,7 @@
 //! Integration tests for the routing engine: model resolution precedence and
 //! the fallback walk in [`omniroute_core::routing::execute`].
 
+use std::future::Future;
 use std::net::SocketAddr;
 use std::sync::{Arc, Mutex, RwLock};
 
@@ -13,7 +14,9 @@ use futures_util::StreamExt;
 use omniroute_core::config::{Combo, ComboStep, GatewayConfig, ProviderConfig, ProviderKind};
 use omniroute_core::protocol::{ChatCompletionRequest, ChatMessage, Role};
 use omniroute_core::providers::{UpstreamError, UpstreamOutcome};
-use omniroute_core::routing::{execute, resolve_model, ResolveError, ResolvedModel, RouteError};
+use omniroute_core::routing::{
+    execute, resolve_model, ResolveError, ResolvedModel, RouteError, RouteOutcome,
+};
 use omniroute_core::sse::SseEvent;
 use omniroute_core::state::{AppState, Stats};
 use serde_json::json;
@@ -124,6 +127,14 @@ fn sse_response(parts: Vec<String>) -> Response {
 fn chunk(id: u64, text: &str) -> String {
     format!(
         r#"data: {{"id":"c{id}","object":"chat.completion.chunk","created":1,"model":"m","choices":[{{"index":0,"delta":{{"content":"{text}"}}}}]}}"#
+    )
+}
+
+fn usage_chunk(id: u64, prompt: u64, completion: u64) -> String {
+    format!(
+        "data: {{\"id\":\"c{id}\",\"object\":\"chat.completion.chunk\",\"created\":1,\"model\":\"m\",\"choices\":[],\"usage\":{{\"prompt_tokens\":{prompt},\"completion_tokens\":{completion}}}}}\n\n",
+        prompt = prompt,
+        completion = completion,
     )
 }
 
@@ -431,4 +442,60 @@ async fn all_steps_failed_returns_all_failed() {
         RouteError::AllFailed(errs) => assert_eq!(errs.len(), 2, "one error per attempt"),
         other => panic!("expected RouteError::AllFailed, got {other:?}"),
     }
+}
+
+#[tokio::test]
+async fn execute_future_is_send() {
+    // `execute`'s future must be `Send` so Task 11's axum handlers can `.await`
+    // it on a multi-threaded runtime.
+    fn require_send<F: Future<Output = Result<RouteOutcome, RouteError>> + Send>(_: F) {}
+    let stats = Arc::new(Stats::new());
+    let state = app_state(GatewayConfig::default(), Arc::clone(&stats));
+    require_send(execute(&state, chat_req("free", false)));
+}
+
+#[tokio::test]
+async fn stream_usage_in_last_event_is_recorded() {
+    // Usage arrives in the LAST stream event (OpenAI `include_usage` style);
+    // the stats must reflect it after the stream completes.
+    let upstream = spawn_upstream(|_| {
+        sse_response(vec![
+            format!("{}\n\n", chunk(1, "a")),
+            usage_chunk(2, 7, 3),
+            "data: [DONE]\n\n".to_string(),
+        ])
+    })
+    .await;
+
+    let cfg = gateway(
+        None,
+        vec![combo("free", vec![("p1", "m1"), ("p2", "m2")])],
+        &upstream.base_url(),
+    );
+    let stats = Arc::new(Stats::new());
+    let state = app_state(cfg.clone(), Arc::clone(&stats));
+
+    let outcome = execute(&state, chat_req("free", true))
+        .await
+        .expect("committed stream executes");
+    let stream = match outcome.response {
+        UpstreamOutcome::Stream(s) => s,
+        UpstreamOutcome::Json(_) => panic!("expected Stream outcome"),
+    };
+    let events = collect(stream).await;
+    assert_eq!(
+        events.len(),
+        2,
+        "content chunk + usage chunk, [DONE] stripped"
+    );
+
+    let snapshot = stats.snapshot(&cfg);
+    let p1 = snapshot
+        .providers
+        .iter()
+        .find(|p| p.id == "p1")
+        .expect("p1 snapshotted");
+    assert!(p1.healthy, "stream completed successfully");
+    assert_eq!(p1.tokens_in, 7, "usage from last event recorded");
+    assert_eq!(p1.tokens_out, 3, "usage from last event recorded");
 }
