@@ -57,7 +57,10 @@ pub fn authorize(
             .filter(|(scheme, _)| scheme.eq_ignore_ascii_case("bearer"))
             .map(|(_, key)| key)
             .ok_or(AuthError::InvalidKey)?;
-        if cfg.gateway_keys.iter().any(|k| k == presented) {
+        if cfg
+            .gateway_keys
+            .iter()
+            .any(|k| !k.is_empty() && k == presented) {
             return Ok(());
         }
         return Err(AuthError::InvalidKey);

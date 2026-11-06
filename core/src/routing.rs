@@ -272,7 +272,11 @@ pub async fn execute(
             .get(&attempt.provider)
             .ok_or(ResolveError::UnknownProvider(attempt.provider.clone()))?;
         let adapter = adapter_for(provider_cfg, state.client.clone(), request_timeout_ms);
-        let outcome = adapter.chat(&req).await;
+        // Propagate the step's model to the upstream body, not the client-facing
+        // name carried by the original request.
+        let mut attempt_req = req.clone();
+        attempt_req.model = attempt.model.clone();
+        let outcome = adapter.chat(&attempt_req).await;
         match outcome {
             Err(e) => {
                 record_failure(state, &e);
@@ -320,6 +324,13 @@ pub async fn execute(
                         continue;
                     }
                     Some(Ok(first_ev)) => {
+                        state.stats.log(
+                            LogLevel::Info,
+                            format!(
+                                "provider {} served model {}",
+                                attempt.provider, attempt.model
+                            ),
+                        );
                         // First byte reached the caller: the attempt is committed.
                         // The wrapper captures usage from every yielded event and
                         // records the attempt's success exactly once when the stream

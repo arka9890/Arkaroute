@@ -80,3 +80,12 @@ fn empty_keys_reject_remote_even_when_lan_off() {
     // ...and the same config still serves loopback.
     assert_eq!(authorize(&cfg, &HeaderMap::new(), true), Ok(()));
 }
+
+#[test]
+fn empty_configured_key_cannot_authenticate() {
+    let cfg = keys_config(&[""]);
+
+    let err = authorize(&cfg, &bearer_header("Bearer "), false)
+        .unwrap_err();
+    assert_eq!(err.status(), 401);
+}

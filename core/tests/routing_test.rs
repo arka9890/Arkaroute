@@ -36,6 +36,8 @@ type Script = Arc<dyn Fn(usize) -> Response + Send + Sync>;
 struct MockUpstream {
     addr: SocketAddr,
     requests: Arc<Mutex<Vec<usize>>>,
+    /// Captured request bodies, one per received request (in order).
+    bodies: Arc<Mutex<Vec<String>>>,
     handle: tokio::task::JoinHandle<()>,
 }
 
@@ -51,14 +53,21 @@ impl Drop for MockUpstream {
     }
 }
 
-async fn handle(State(state): State<(Arc<Mutex<Vec<usize>>>, Script)>, _req: Request) -> Response {
-    let (requests, script) = state;
+async fn handle(State(state): State<(Arc<Mutex<Vec<usize>>>, Arc<Mutex<Vec<String>>>, Script)>, req: Request) -> Response {
+    let (requests, bodies, script) = state;
     let index = {
         let mut requests = requests.lock().expect("mock request lock");
         let index = requests.len();
         requests.push(index);
         index
     };
+    let body_bytes = axum::body::to_bytes(req.into_body(), 1024 * 1024)
+        .await
+        .unwrap_or_default();
+    bodies
+        .lock()
+        .expect("mock body lock")
+        .push(String::from_utf8_lossy(&body_bytes).to_string());
     script(index)
 }
 
@@ -68,7 +77,8 @@ async fn spawn_upstream(
     script: impl Fn(usize) -> Response + Send + Sync + 'static,
 ) -> MockUpstream {
     let requests = Arc::new(Mutex::new(Vec::new()));
-    let state = (requests.clone(), Arc::new(script) as Script);
+    let bodies = Arc::new(Mutex::new(Vec::new()));
+    let state = (requests.clone(), bodies.clone(), Arc::new(script) as Script);
     let router = axum::Router::new().fallback(handle).with_state(state);
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
@@ -82,6 +92,7 @@ async fn spawn_upstream(
     MockUpstream {
         addr,
         requests,
+        bodies,
         handle,
     }
 }
@@ -498,4 +509,60 @@ async fn stream_usage_in_last_event_is_recorded() {
     assert!(p1.healthy, "stream completed successfully");
     assert_eq!(p1.tokens_in, 7, "usage from last event recorded");
     assert_eq!(p1.tokens_out, 3, "usage from last event recorded");
+}
+
+#[tokio::test]
+async fn non_stream_upstream_receives_step_model_not_combo_name() {
+    let upstream = spawn_upstream(|_| json_ok(JSON_OK)).await;
+    let cfg = gateway(
+        None,
+        vec![combo("c", vec![("p1", "step-model")])],
+        &upstream.base_url(),
+    );
+    let stats = Arc::new(Stats::new());
+    let state = app_state(cfg, Arc::clone(&stats));
+
+    let outcome = execute(&state, chat_req("c", false)).await.expect("ok");
+    assert!(matches!(outcome.response, UpstreamOutcome::Json(_)));
+
+    let bodies = upstream.bodies.lock().expect("mock body lock");
+    assert_eq!(bodies.len(), 1, "one upstream request");
+    let body: serde_json::Value = serde_json::from_str(&bodies[0]).expect("valid json body");
+    assert_eq!(
+        body.get("model").and_then(|v| v.as_str()),
+        Some("step-model"),
+        "upstream body model must be the step model, not the combo name"
+    );
+}
+
+#[tokio::test]
+async fn stream_upstream_receives_step_model_not_combo_name() {
+    let upstream = spawn_upstream(|_| {
+        sse_response(vec![format!("{}\n\n", chunk(1, "a")), "data: [DONE]\n\n".to_string()])
+    })
+    .await;
+    let cfg = gateway(
+        None,
+        vec![combo("c", vec![("p1", "step-model")])],
+        &upstream.base_url(),
+    );
+    let stats = Arc::new(Stats::new());
+    let state = app_state(cfg, Arc::clone(&stats));
+
+    let outcome = execute(&state, chat_req("c", true)).await.expect("ok");
+    let stream = match outcome.response {
+        UpstreamOutcome::Stream(s) => s,
+        _ => panic!("expected stream"),
+    };
+    // Drain to completion.
+    let _ = collect(stream).await;
+
+    let bodies = upstream.bodies.lock().expect("mock body lock");
+    assert_eq!(bodies.len(), 1, "one upstream request");
+    let body: serde_json::Value = serde_json::from_str(&bodies[0]).expect("valid json body");
+    assert_eq!(
+        body.get("model").and_then(|v| v.as_str()),
+        Some("step-model"),
+        "upstream body model must be the step model, not the combo name"
+    );
 }
