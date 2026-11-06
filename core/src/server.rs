@@ -3,8 +3,7 @@
 use std::net::SocketAddr;
 
 use axum::body::Bytes;
-use axum::extract::{ConnectInfo, FromRequestParts, State};
-use axum::extract::connect_info::MockConnectInfo;
+use axum::extract::{ConnectInfo, FromRequestParts, Path, State};use axum::extract::connect_info::MockConnectInfo;
 use axum::http::request::Parts;
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
@@ -29,6 +28,9 @@ pub fn build_router(state: AppState) -> Router {
         .route("/v1/chat/completions", post(chat_completions_handler))
         .route("/v1/messages", post(messages_handler))
         .route("/v1/models", get(models_handler))
+        .route("/dashboard", get(dashboard_index_handler))
+        .route("/dashboard/", get(dashboard_root_handler))
+        .route("/dashboard/{*path}", get(dashboard_asset_handler))
         .with_state(state)
 }
 
@@ -147,6 +149,59 @@ async fn models_handler(
         }));
     }
     (StatusCode::OK, Json(json!({"object": "list", "data": data}))).into_response()
+}
+
+/// `GET /dashboard` -> 302 redirect to `/dashboard/`.
+async fn dashboard_index_handler(
+    peer: PeerAddr,
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Response {
+    let cfg = read_cfg(&state);
+    let peer_is_loopback = peer.0.map(|a| a.ip().is_loopback()).unwrap_or(false);
+    if !peer_is_loopback {
+        if let Err(e) = authorize(&cfg, &headers, false) {
+            return auth_error_body(e).into_response();
+        }
+    }
+    (StatusCode::FOUND, [(axum::http::header::LOCATION, "/dashboard/")]).into_response()
+}
+
+/// `GET /dashboard/` -> embedded index asset.
+async fn dashboard_root_handler(
+    peer: PeerAddr,
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Response {
+    let cfg = read_cfg(&state);
+    let peer_is_loopback = peer.0.map(|a| a.ip().is_loopback()).unwrap_or(false);
+    if !peer_is_loopback {
+        if let Err(e) = authorize(&cfg, &headers, false) {
+            return auth_error_body(e).into_response();
+        }
+    }
+    let _ = headers;
+    let _ = cfg;
+    crate::dashboard::serve_asset("")
+}
+
+/// `GET /dashboard/*` -> embedded asset.
+async fn dashboard_asset_handler(
+    peer: PeerAddr,
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(path): Path<String>,
+) -> Response {
+    let cfg = read_cfg(&state);
+    let peer_is_loopback = peer.0.map(|a| a.ip().is_loopback()).unwrap_or(false);
+    if !peer_is_loopback {
+        if let Err(e) = authorize(&cfg, &headers, false) {
+            return auth_error_body(e).into_response();
+        }
+    }
+    let _ = headers;
+    let _ = cfg;
+    crate::dashboard::serve_asset(&path)
 }
 
 async fn chat_completions_handler(
