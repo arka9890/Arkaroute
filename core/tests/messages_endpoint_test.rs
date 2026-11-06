@@ -269,3 +269,94 @@ async fn unknown_model_is_not_found_error_shape() {
     assert_eq!(json["error"]["type"], "not_found_error");
     handle.abort();
 }
+
+#[tokio::test]
+async fn messages_stream_incremental_emits_before_upstream_eof() {
+
+    let stream = async_stream::stream! {
+        yield Ok::<_, std::convert::Infallible>(Bytes::from(
+            "data: {\"id\":\"c1\",\"object\":\"chat.completion.chunk\",\"created\":1,\"model\":\"gpt-4o\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"Hel\"},\"finish_reason\":null}]}\n\n",
+        ));
+        tokio::time::sleep(Duration::from_secs(5)).await;
+    };
+    let holder = std::sync::Arc::new(std::sync::Mutex::new(Some(Box::pin(stream)
+        as std::pin::Pin<Box<dyn futures_util::Stream<Item = Result<Bytes, std::convert::Infallible>> + Send>>)));
+    let holder_clone = holder.clone();
+    let upstream = spawn_upstream(move |_i| {
+        let s = holder_clone.lock().unwrap().take().unwrap();
+        axum::response::Response::builder()
+            .status(StatusCode::OK)
+            .header(header::CONTENT_TYPE, "text/event-stream")
+            .body(Body::from_stream(s))
+            .unwrap()
+    })
+    .await;
+    let mut cfg = gateway(&upstream.base_url(), vec![]);
+    cfg.stream_idle_timeout_ms = 5_000;
+    let (gaddr, ghandle) = spawn(app_state(cfg)).await;
+
+    let resp = Client::new()
+        .post(format!("http://{gaddr}/v1/messages"))
+        .json(&json!({"model":"openai/gpt-4o","max_tokens":100,"messages":[{"role":"user","content":"hi"}],"stream":true}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let mut stream = resp.bytes_stream();
+    let mut body = String::new();
+    let started = std::time::Instant::now();
+    while started.elapsed() < Duration::from_millis(1500) {
+        match tokio::time::timeout(Duration::from_millis(200), stream.next()).await {
+            Ok(Some(Ok(chunk))) => body.push_str(&String::from_utf8_lossy(&chunk)),
+            Ok(Some(Err(_))) => break,
+            Ok(None) => break,
+            Err(_) => break,
+        }
+        if body.contains("message_start") && body.contains("Hel") {
+            break;
+        }
+    }
+    assert!(body.contains("message_start"), "message_start not emitted early: {body}");
+    assert!(body.contains("Hel"), "content not emitted early: {body}");
+    ghandle.abort();
+}
+
+#[tokio::test]
+async fn messages_stream_midstream_failure_emits_error_frame() {
+    let stream = async_stream::stream! {
+        yield Ok::<_, std::convert::Infallible>(Bytes::from(
+            "data: {\"id\":\"c1\",\"object\":\"chat.completion.chunk\",\"created\":1,\"model\":\"gpt-4o\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"Hel\"},\"finish_reason\":null}]}\n\n",
+        ));
+        tokio::time::sleep(Duration::from_secs(5)).await;
+    };
+    let holder = std::sync::Arc::new(std::sync::Mutex::new(Some(Box::pin(stream)
+        as std::pin::Pin<Box<dyn futures_util::Stream<Item = Result<Bytes, std::convert::Infallible>> + Send>>)));
+    let holder_clone = holder.clone();
+    let upstream = spawn_upstream(move |_i| {
+        let s = holder_clone.lock().unwrap().take().unwrap();
+        axum::response::Response::builder()
+            .status(StatusCode::OK)
+            .header(header::CONTENT_TYPE, "text/event-stream")
+            .body(Body::from_stream(s))
+            .unwrap()
+    })
+    .await;
+    let mut cfg = gateway(&upstream.base_url(), vec![]);
+    cfg.stream_idle_timeout_ms = 200;
+    let (gaddr, ghandle) = spawn(app_state(cfg)).await;
+
+    let resp = Client::new()
+        .post(format!("http://{gaddr}/v1/messages"))
+        .json(&json!({"model":"openai/gpt-4o","max_tokens":100,"messages":[{"role":"user","content":"hi"}],"stream":true}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let text = tokio::time::timeout(Duration::from_secs(3), resp.text())
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(text.contains("api_error") || text.contains("stream idle timeout"), "{text}");
+    assert!(!text.contains("message_stop"), "no clean message_stop after failure: {text}");
+    ghandle.abort();
+}

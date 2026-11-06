@@ -278,27 +278,137 @@ fn make_anthropic_stream(
     async_stream::stream! {
         let idle = Duration::from_millis(idle_ms);
         let mut events: Vec<crate::sse::SseEvent> = Vec::new();
+        let mut consumed: usize = 0;
+        let mut stream_finished = false;
         loop {
             match timeout(idle, src.next()).await {
                 Ok(Some(Ok(ev))) => {
+                    // Detect whether this canonical chunk closes the stream.
+                    if let Ok(v) = serde_json::from_str::<serde_json::Value>(&ev.data) {
+                        if v.get("choices")
+                            .and_then(serde_json::Value::as_array)
+                            .and_then(|c| c.first())
+                            .and_then(|c| c.get("finish_reason"))
+                            .and_then(serde_json::Value::as_str)
+                            .is_some()
+                        {
+                            stream_finished = true;
+                        }
+                    }
                     events.push(ev);
+
+                    let out = crate::translate::stream::o2a_stream(events.clone(), &model);
+                    let trailer = trailing_finalization_count(&out);
+                    let emit_count = if stream_finished {
+                        out.len()
+                    } else {
+                        out.len().saturating_sub(trailer)
+                    };
+
+                    if emit_count < consumed {
+                        // Fold is not prefix-stable: surface an error rather than
+                        // re-emitting.
+                        tracing::warn!("anthropic stream translation lost events");
+                        let frame = crate::sse::SseEvent {
+                            event: Some("error".to_string()),
+                            data: serde_json::json!({
+                                "type": "error",
+                                "error": {
+                                    "type": "api_error",
+                                    "message": "stream translation lost events"
+                                }
+                            })
+                            .to_string(),
+                        };
+                        yield Ok(Bytes::from(format_event(&frame)));
+                        break;
+                    }
+                    if emit_count > consumed {
+                        for ev in &out[consumed..emit_count] {
+                            yield Ok(Bytes::from(format_event(ev)));
+                        }
+                        consumed = emit_count;
+                    }
                 }
-                Ok(Some(Err(_))) => {
+                Ok(Some(Err(e))) => {
+                    tracing::warn!("upstream stream failed: status {}", e.status());
+                    let frame = crate::sse::SseEvent {
+                        event: Some("error".to_string()),
+                        data: serde_json::json!({
+                            "type": "error",
+                            "error": {
+                                "type": "api_error",
+                                "message": format!("upstream error status {}", e.status())
+                            }
+                        })
+                        .to_string(),
+                    };
+                    yield Ok(Bytes::from(format_event(&frame)));
                     break;
                 }
                 Ok(None) => {
+                    // Upstream ended normally: emit any remaining frames,
+                    // including finalization.
+                    let out = crate::translate::stream::o2a_stream(events.clone(), &model);
+                    if out.len() > consumed {
+                        for ev in &out[consumed..] {
+                            yield Ok(Bytes::from(format_event(ev)));
+                        }
+                    }
                     break;
                 }
                 Err(_) => {
+                    tracing::warn!("stream idle timeout");
+                    let frame = crate::sse::SseEvent {
+                        event: Some("error".to_string()),
+                        data: serde_json::json!({
+                            "type": "error",
+                            "error": {
+                                "type": "api_error",
+                                "message": "stream idle timeout"
+                            }
+                        })
+                        .to_string(),
+                    };
+                    yield Ok(Bytes::from(format_event(&frame)));
                     break;
                 }
             }
         }
-        let out = crate::translate::stream::o2a_stream(events, &model);
-        for ev in out {
-            yield Ok(Bytes::from(format_event(&ev)));
+    }
+}
+
+/// How many trailing frames `o2a_stream` appends as its finalization trailer
+/// (`content_block_stop` when a block was open, then `message_delta` and
+/// `message_stop`).
+fn trailing_finalization_count(out: &[crate::sse::SseEvent]) -> usize {
+    if out.is_empty() {
+        return 0;
+    }
+    let last = serde_json::from_str::<serde_json::Value>(&out[out.len() - 1].data).ok();
+    if last.as_ref().and_then(|v| v.get("type")).and_then(serde_json::Value::as_str)
+        != Some("message_stop")
+    {
+        return 0;
+    }
+    if out.len() < 2 {
+        return 1;
+    }
+    let second = serde_json::from_str::<serde_json::Value>(&out[out.len() - 2].data).ok();
+    if second.as_ref().and_then(|v| v.get("type")).and_then(serde_json::Value::as_str)
+        != Some("message_delta")
+    {
+        return 1;
+    }
+    if out.len() >= 3 {
+        let third = serde_json::from_str::<serde_json::Value>(&out[out.len() - 3].data).ok();
+        if third.as_ref().and_then(|v| v.get("type")).and_then(serde_json::Value::as_str)
+            == Some("content_block_stop")
+        {
+            return 3;
         }
     }
+    2
 }
 
 fn make_stream(
