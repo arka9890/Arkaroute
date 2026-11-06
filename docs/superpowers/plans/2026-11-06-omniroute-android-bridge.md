@@ -52,13 +52,13 @@ Failure modes the spec implies that no happy-path test covers — each pinned to
 ```kotlin
 @RunWith(RobolectricTestRunner::class)
 class MainActivityTest {
-    @get:Rule val compose = createComposeRule()
+    @get:Rule val compose = createAndroidComposeRule<MainActivity>()
     @Test fun mainActivity_shows_title() {
-        compose.setContent { MainActivity() }
         compose.onNodeWithText("OmniRoute Gateway").assertIsDisplayed()
     }
 }
 ```
+(Controller-corrected after Task 1 review: the original brief's `createComposeRule() + setContent { MainActivity() }` is uncompilable — `MainActivity` is an `Activity`, not a composable. `createAndroidComposeRule` launches the real activity and is the stronger test.)
 
 - [ ] **Step 2: Push the test alone; confirm CI RED**
 
@@ -68,7 +68,7 @@ Commit `test: scaffold smoke test for MainActivity`, push, poll the CI command f
 
 `settings.gradle.kts`: `rootProject.name = "Arkaroute"`; `include(":app")`; `pluginManagement`/`dependencyResolutionManagement` repos `google()`, `mavenCentral()`, `gradlePluginPortal()` (FAIL_ON_PROJECT_REPOS mode).
 Root `build.gradle.kts`: plugins `com.android.application` 8.7.3, `org.jetbrains.kotlin.android` 2.0.21, `org.jetbrains.kotlin.plugin.compose` 2.0.21, `org.jetbrains.kotlin.plugin.serialization` 2.0.21 — all `apply false`.
-`app/build.gradle.kts`: plugins `com.android.application`, `org.jetbrains.kotlin.android`, `org.jetbrains.kotlin.plugin.compose`, `org.jetbrains.kotlin.plugin.serialization` (all from the root's `apply false` declarations), namespace/applicationId `com.omniroute.app`, compileSdk 35, minSdk 26, targetSdk 35, `versionCode = 1`, `versionName = "0.1.0"`, `ndk { abiFilters += "arm64-v8a" }`, JVM target 17 (compileOptions + kotlinOptions), `buildFeatures { compose = true }`, dependencies: `org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3` (runtime — the serialization plugin alone does not ship the Json library; Task 4 needs it), `androidx.activity:activity-compose`, `androidx.compose:compose-bom:2024.10.01` (ui, material3, ui-tooling-preview + debug), `androidx.lifecycle:lifecycle-runtime-ktx`, `org.robolectric:robolectric:4.14.1`, `androidx.compose.ui:ui-test-junit4`, `junit:junit:4.13.2`, and `testOptions { unitTests { isIncludeAndroidResources = true } }`.
+`app/build.gradle.kts`: plugins `com.android.application`, `org.jetbrains.kotlin.android`, `org.jetbrains.kotlin.plugin.compose`, `org.jetbrains.kotlin.plugin.serialization` (all from the root's `apply false` declarations), namespace/applicationId `com.omniroute.app`, compileSdk 35, minSdk 26, targetSdk 35, `versionCode = 1`, `versionName = "0.1.0"`, `ndk { abiFilters += "arm64-v8a" }`, JVM target 17 (compileOptions + kotlinOptions), `buildFeatures { compose = true }`, dependencies: `org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3` (runtime — the serialization plugin alone does not ship the Json library; Task 4 needs it), `androidx.activity:activity-compose:1.9.3`, `androidx.lifecycle:lifecycle-runtime-ktx:2.8.6`, `androidx.compose:compose-bom:2024.10.01` (ui, material3, ui-tooling-preview + debug), `androidx.lifecycle:lifecycle-runtime-ktx`, `org.robolectric:robolectric:4.14.1`, `androidx.compose.ui:ui-test-junit4`, `junit:junit:4.13.2`, and `testOptions { unitTests { isIncludeAndroidResources = true } }`.
 `gradle.properties`: `android.useAndroidX=true`, `org.gradle.jvmargs=-Xmx2g`.
 Root `.gitignore`: `.gradle/`, `app/build/`, `local.properties`, `app/src/main/jniLibs/`, `.kotlin/`.
 Manifest: `<application android:label="@string/app_name" android:theme="@android:style/Theme.Material.NoActionBar">` with `MainActivity` exported + launcher intent; `res/values/strings.xml` with `app_name` = `OmniRoute` (Indonesian copy grows in later tasks).
