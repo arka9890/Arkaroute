@@ -31,7 +31,7 @@ pub fn build_router(state: AppState) -> Router {
         .with_state(state)
 }
 
-struct PeerAddr(SocketAddr);
+struct PeerAddr(Option<SocketAddr>);
 
 impl<S> FromRequestParts<S> for PeerAddr
 where
@@ -41,12 +41,17 @@ where
 
     async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self, Self::Rejection> {
         if let Some(ci) = parts.extensions.get::<ConnectInfo<SocketAddr>>() {
-            return Ok(PeerAddr(ci.0));
+            return Ok(PeerAddr(Some(ci.0)));
         }
         if let Some(mc) = parts.extensions.get::<MockConnectInfo<SocketAddr>>() {
-            return Ok(PeerAddr(mc.0));
+            return Ok(PeerAddr(Some(mc.0)));
         }
-        Ok(PeerAddr(SocketAddr::from(([127, 0, 0, 1], 0))))
+        use std::sync::atomic::{AtomicBool, Ordering};
+        static WARNED: AtomicBool = AtomicBool::new(false);
+        if !WARNED.swap(true, Ordering::Relaxed) {
+            tracing::warn!("no peer address source present in request extensions; treating peer as non-loopback");
+        }
+        Ok(PeerAddr(None))
     }
 }
 
@@ -88,7 +93,7 @@ async fn health_handler(
     headers: HeaderMap,
 ) -> Response {
     let cfg = read_cfg(&state);
-    if let Err(e) = authorize(&cfg, &headers, peer.0.ip().is_loopback()) {
+    if let Err(e) = authorize(&cfg, &headers, peer.0.map(|a| a.ip().is_loopback()).unwrap_or(false)) {
         return auth_error_body(e).into_response();
     }
     let snapshot = state.stats.snapshot(&cfg);
@@ -101,7 +106,7 @@ async fn models_handler(
     headers: HeaderMap,
 ) -> Response {
     let cfg = read_cfg(&state);
-    if let Err(e) = authorize(&cfg, &headers, peer.0.ip().is_loopback()) {
+    if let Err(e) = authorize(&cfg, &headers, peer.0.map(|a| a.ip().is_loopback()).unwrap_or(false)) {
         return auth_error_body(e).into_response();
     }
     let mut data = Vec::new();
@@ -131,7 +136,7 @@ async fn chat_completions_handler(
     body: Bytes,
 ) -> Response {
     let cfg = read_cfg(&state);
-    if let Err(e) = authorize(&cfg, &headers, peer.0.ip().is_loopback()) {
+    if let Err(e) = authorize(&cfg, &headers, peer.0.map(|a| a.ip().is_loopback()).unwrap_or(false)) {
         return auth_error_body(e).into_response();
     }
 

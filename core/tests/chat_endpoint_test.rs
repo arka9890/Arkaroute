@@ -345,3 +345,35 @@ async fn stalled_upstream_stream_times_out() {
     ghandle.abort();
     uhandle.abort();
 }
+
+#[tokio::test]
+async fn peer_without_connect_info_fails_closed() {
+    // keyless config: missing connect-info must NOT be treated as loopback
+    let cfg = GatewayConfig::default();
+    let router = build_router(app_state(cfg));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let handle = tokio::spawn(async move { axum::serve(listener, router).await.unwrap(); });
+    let resp = Client::new()
+        .get(format!("http://{addr}/health"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 403);
+    handle.abort();
+
+    // keys configured: still 401 without a key regardless of peer
+    let mut cfg = GatewayConfig::default();
+    cfg.gateway_keys = vec!["k".into()];
+    let router = build_router(app_state(cfg));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let handle = tokio::spawn(async move { axum::serve(listener, router).await.unwrap(); });
+    let resp = Client::new()
+        .get(format!("http://{addr}/v1/models"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 401);
+    handle.abort();
+}
