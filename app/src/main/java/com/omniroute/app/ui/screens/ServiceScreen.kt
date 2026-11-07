@@ -157,7 +157,7 @@ private fun HeroCard(
             ClayToggle(
                 checked = toggleChecked,
                 onCheckedChange = onDaemon,
-                modifier = Modifier.semantics { contentDescription = "Daemon" },
+                modifier = Modifier.semantics { contentDescription = stringResource(R.string.daemon_desc) },
             )
         }
         Spacer(Modifier.height(10.dp))

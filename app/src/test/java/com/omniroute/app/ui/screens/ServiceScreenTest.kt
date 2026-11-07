@@ -3,9 +3,9 @@ package com.omniroute.app.ui.screens
 import android.content.Context
 import androidx.activity.ComponentActivity
 import androidx.compose.ui.test.assertIsDisplayed
-import androidx.compose.ui.test.hasToggleableState
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import com.omniroute.app.R
@@ -92,7 +92,7 @@ class ServiceScreenTest {
     @Test fun daemon_toggle_dispatches_stop_when_running() {
         var captured: Boolean? = null
         setScreen(runningState()) { captured = it }
-        composeRule.onNode(hasToggleableState()).performClick()
+        composeRule.onNodeWithContentDescription(context.getString(R.string.daemon_desc)).performClick()
         assertEquals(false, captured)
     }
 

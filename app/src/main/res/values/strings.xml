@@ -25,6 +25,7 @@
     <string name="status_stopped">Layanan Berhenti</string>
     <string name="service_subtitle">Daemon pengarah AI multi-penyedia Android</string>
     <string name="daemon_label">Daemon</string>
+    <string name="daemon_desc">Daemon</string>
     <string name="host_label">Host Lokal Port</string>
     <string name="uptime_label">Waktu Aktif</string>
     <string name="metric_requests">Permintaan</string>
