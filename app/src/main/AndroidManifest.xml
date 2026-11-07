@@ -17,6 +17,11 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+        <!-- Compose-test shim: lets Robolectric resolve the empty ComponentActivity
+             used by createAndroidComposeRule in ShellTest. Never exported, never launched. -->
+        <activity
+            android:name="androidx.activity.ComponentActivity"
+            android:exported="false" />
         <service
             android:name=".service.GatewayService"
             android:foregroundServiceType="specialUse"
