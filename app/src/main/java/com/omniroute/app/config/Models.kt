@@ -4,7 +4,7 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.json.Json
 
-val ConfigJson = Json { ignoreUnknownKeys = true; explicitNulls = false }
+val ConfigJson = Json { ignoreUnknownKeys = true; explicitNulls = false; encodeDefaults = true }
 
 @Serializable
 data class ClientKey(
