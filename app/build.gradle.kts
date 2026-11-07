@@ -35,6 +35,14 @@ android {
             isIncludeAndroidResources = true
         }
     }
+    tasks.withType<Test> {
+        testLogging {
+            showExceptions = true
+            showStackTraces = true
+            showCauses = true
+            exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL
+        }
+    }
 }
 
 dependencies {
