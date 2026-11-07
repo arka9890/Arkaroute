@@ -20,4 +20,29 @@
     <string name="avatar_desc">Profil</string>
     <string name="settings_title">Pengaturan Gateway</string>
     <string name="settings_placeholder">Bagian pengaturan akan diisi di tugas berikutnya</string>
+
+    <string name="status_running">Berjalan</string>
+    <string name="status_stopped">Layanan Berhenti</string>
+    <string name="service_subtitle">Daemon pengarah AI multi-penyedia Android</string>
+    <string name="daemon_label">Daemon</string>
+    <string name="host_label">Host Lokal Port</string>
+    <string name="uptime_label">Waktu Aktif</string>
+    <string name="metric_requests">Permintaan</string>
+    <string name="metric_tokens">Total Token</string>
+    <string name="metric_latency">Latensi Tertinggi (ms)</string>
+    <string name="metric_health">Kesehatan</string>
+    <string name="requests_per_minute_format">%1$d req/mnt</string>
+    <string name="requests_total_footer">+%1$d total</string>
+    <string name="tokens_footer">%1$d masuk · %2$d keluar</string>
+    <string name="requests_failed_footer">%1$d permintaan gagal</string>
+    <string name="pipeline_title">Pipa Tingkatan Routing</string>
+    <string name="pipeline_pill">Otomatis-Failover</string>
+    <string name="pipeline_health_ok">Sehat</string>
+    <string name="pipeline_health_bad">Tidak sehat</string>
+    <string name="logs_title">Log Aliran SSE Langsung</string>
+    <string name="logs_copy">Salin</string>
+    <string name="logs_copied_toast">Log disalin</string>
+    <string name="restart_action">Mulai Ulang</string>
+    <string name="clear_cache_action">Hapus Cache</string>
+    <string name="cache_cleared_toast">Cache berhasil dibersihkan</string>
 </resources>

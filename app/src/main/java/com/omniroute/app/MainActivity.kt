@@ -1,29 +1,42 @@
 package com.omniroute.app
 
 import android.Manifest
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.padding
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.Dispatchers
 import com.omniroute.app.config.ConfigStore
 import com.omniroute.app.config.KeystoreCryptoEngine
+import com.omniroute.app.data.AndroidServiceController
+import com.omniroute.app.data.GatewayRepository
+import com.omniroute.app.data.HttpHealthSource
+import com.omniroute.app.data.JniGatewayBridge
 import com.omniroute.app.service.GatewayService
+import com.omniroute.app.ui.screens.ServiceScreen
 import com.omniroute.app.ui.shell.AppShell
 import com.omniroute.app.ui.shell.Tab
 import com.omniroute.app.ui.theme.ClayTheme
@@ -37,13 +50,45 @@ class MainActivity : ComponentActivity() {
         }
         startForegroundService(startIntent)
         setContent {
+            val context = LocalContext.current
             val store = remember { ConfigStore(filesDir, KeystoreCryptoEngine()) }
             val (core, app) = remember(store) { store.load() }
+            val repository = remember(store) {
+                GatewayRepository(
+                    JniGatewayBridge,
+                    HttpHealthSource(),
+                    store,
+                    AndroidServiceController(this@MainActivity),
+                )
+            }
+            val pollScope = remember { CoroutineScope(SupervisorJob() + Dispatchers.IO) }
+            DisposableEffect(pollScope) { onDispose { pollScope.cancel() } }
+            LaunchedEffect(repository) { repository.startPolling(pollScope) }
+            val state by repository.state.collectAsState()
             ClayTheme(colors = clayColorsFor(app.themeMode, app.highContrast), depth = app.clayDepth) {
                 PermissionsRequest()
                 AppShell(port = core.port) { tab ->
                     when (tab) {
-                        Tab.SERVICE -> ServiceScreen()
+                        Tab.SERVICE -> ServiceScreen(
+                            state = state,
+                            onDaemon = { on -> repository.requestDaemon(on) },
+                            onRestart = {
+                                repository.requestDaemon(false)
+                                pollScope.launch {
+                                    delay(300)
+                                    repository.requestDaemon(true)
+                                }
+                            },
+                            onClearCache = {
+                                AppCache.clear(context)
+                                Toast.makeText(context, R.string.cache_cleared_toast, Toast.LENGTH_SHORT).show()
+                            },
+                            onCopyLog = { text ->
+                                val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                                clipboard.setPrimaryClip(ClipData.newPlainText("logs", text))
+                                Toast.makeText(context, R.string.logs_copied_toast, Toast.LENGTH_SHORT).show()
+                            },
+                        )
                         Tab.WEBVIEW, Tab.PROVIDERS, Tab.COMBOS, Tab.ROUTES ->
                             // Placeholder — each tab gets its own screen in a later task.
                             Box(Modifier.fillMaxSize())
@@ -54,19 +99,6 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-@Composable
-private fun ServiceScreen() {
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(16.dp),
-    ) {
-        Text(
-            text = stringResource(R.string.service_title),
-            color = ClayTheme.colors.onSurface,
-        )
-    }
-}
 
 @Composable
 fun PermissionsRequest() {
