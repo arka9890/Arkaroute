@@ -120,6 +120,7 @@ private fun HeroCard(
     onDaemon: (Boolean) -> Unit,
 ) {
     val colors = ClayTheme.colors
+    val daemonDesc = stringResource(R.string.daemon_desc)
     ClayCard(modifier = Modifier.fillMaxWidth()) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             StatusPill(running = running)
@@ -157,7 +158,7 @@ private fun HeroCard(
             ClayToggle(
                 checked = toggleChecked,
                 onCheckedChange = onDaemon,
-                modifier = Modifier.semantics { contentDescription = stringResource(R.string.daemon_desc) },
+                modifier = Modifier.semantics { contentDescription = daemonDesc },
             )
         }
         Spacer(Modifier.height(10.dp))
