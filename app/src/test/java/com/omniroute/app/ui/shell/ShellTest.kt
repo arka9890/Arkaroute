@@ -1,6 +1,7 @@
 package com.omniroute.app.ui.shell
 
 import android.content.Context
+import androidx.activity.ComponentActivity
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
@@ -10,12 +11,11 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.test.assertIsDisplayed
-import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
-import androidx.compose.ui.test.assertDoesNotExist
 import com.omniroute.app.R
 import com.omniroute.app.config.AppMeta
 import com.omniroute.app.config.ConfigStore
@@ -40,7 +40,7 @@ private class IdentityCryptoEngine : CryptoEngine {
 
 @RunWith(RobolectricTestRunner::class)
 class ShellTest {
-    @get:Rule val composeRule = createComposeRule()
+    @get:Rule val composeRule = createAndroidComposeRule<ComponentActivity>()
 
     private val context: Context get() = RuntimeEnvironment.getApplication()
 
@@ -83,7 +83,7 @@ class ShellTest {
         composeRule.onNodeWithContentDescription(context.getString(R.string.avatar_desc)).performClick()
         composeRule.onNodeWithText(context.getString(R.string.settings_title)).assertIsDisplayed()
         composeRule.performBackNavigation()
-        composeRule.onNodeWithText(context.getString(R.string.settings_title)).assertDoesNotExist()
+        assertEquals(0, composeRule.onAllNodesWithText(context.getString(R.string.settings_title)).fetchSemanticsNodes().size)
         composeRule.onNodeWithText(context.getString(R.string.tab_service)).assertIsDisplayed()
     }
 
