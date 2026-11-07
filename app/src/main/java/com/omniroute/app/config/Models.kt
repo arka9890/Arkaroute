@@ -18,6 +18,10 @@ data class AppMeta(
     var wakeLock: Boolean = true,
     var webviewUrl: String = "http://127.0.0.1:20128/dashboard",
     var clientKeys: List<ClientKey> = emptyList(),
+    var themeMode: String = "oled",
+    var clayDepth: Int = 85,
+    var highContrast: Boolean = false,
+    var providerLimits: Map<String, Long> = emptyMap(),
 )
 
 @Serializable

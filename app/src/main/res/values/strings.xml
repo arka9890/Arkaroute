@@ -1,8 +1,23 @@
 <resources>
     <string name="app_name">OmniRoute</string>
+    <string name="app_title">OmniRoute</string>
+    <string name="app_subtitle">AI GATEWAY</string>
     <string name="service_channel_name">Status OmniRoute Gateway</string>
     <string name="service_starting">OmniRoute Gateway sedang memulai…</string>
     <string name="service_active">OmniRoute aktif — %1$s:%2$d</string>
     <string name="service_failed">Gagal memulai: %1$s</string>
     <string name="service_unknown_error">kesalahan tidak diketahui</string>
+    <string name="service_title">OmniRoute Gateway</string>
+
+    <string name="tab_service">Layanan</string>
+    <string name="tab_webview">WebView</string>
+    <string name="tab_providers">Penyedia</string>
+    <string name="tab_combos">Kombo</string>
+    <string name="tab_routes">Rute</string>
+
+    <string name="port_pill_format">:%1$d</string>
+    <string name="theme_desc">Ganti tema</string>
+    <string name="avatar_desc">Profil</string>
+    <string name="settings_title">Pengaturan Gateway</string>
+    <string name="settings_placeholder">Bagian pengaturan akan diisi di tugas berikutnya</string>
 </resources>
