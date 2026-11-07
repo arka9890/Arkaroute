@@ -8,6 +8,7 @@ import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import com.omniroute.app.R
 import com.omniroute.app.config.AppMeta
 import com.omniroute.app.config.GatewayConfigJson
@@ -99,10 +100,10 @@ class ServiceScreenTest {
     @Test fun telemetry_shows_real_tokens_and_health() {
         setScreen(runningState())
         // tokensIn=1000 + tokensOut=2000 = 3000 → compact "3.0K tok"
-        composeRule.onNodeWithText("3.0K tok").assertIsDisplayed()
-        // 3 of 4 providers healthy → "75%"
-        composeRule.onNodeWithText("75%").assertIsDisplayed()
-        composeRule.onNodeWithText("2 permintaan gagal", substring = true).assertIsDisplayed()
+        composeRule.onNodeWithText("3.0K tok").performScrollTo().assertIsDisplayed()
+        // 3 of 4 providers healthy → "75%" (bottom bento row, below the fold: scroll first)
+        composeRule.onNodeWithText("75%").performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithText("2 permintaan gagal", substring = true).performScrollTo().assertIsDisplayed()
     }
 
     @Test fun req_per_minute_computed_from_samples() {
