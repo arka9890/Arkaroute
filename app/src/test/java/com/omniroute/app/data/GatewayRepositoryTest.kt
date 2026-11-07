@@ -161,7 +161,7 @@ class GatewayRepositoryTest {
     @Test
     fun polls_every_two_seconds() = runTest {
         healthSource.body = healthJson(7)
-        repository.startPolling(this)
+        repository.startPolling(backgroundScope)
         runCurrent()
         advanceTimeBy(5_000)
         runCurrent()
