@@ -58,17 +58,21 @@ class GatewayRepository(
     private val serviceController: ServiceController,
     private val nowMs: () -> Long = { System.currentTimeMillis() },
 ) {
-    private val (initialCore, initialApp) = store.load()
-    private val _state = MutableStateFlow(
-        GatewayUiState(
-            running = false,
-            health = null,
-            requestsPerMinute = 0,
-            core = initialCore,
-            app = initialApp,
-            lastError = null,
+    private val _state: MutableStateFlow<GatewayUiState>
+
+    init {
+        val (initialCore, initialApp) = store.load()
+        _state = MutableStateFlow(
+            GatewayUiState(
+                running = false,
+                health = null,
+                requestsPerMinute = 0,
+                core = initialCore,
+                app = initialApp,
+                lastError = null,
+            )
         )
-    )
+    }
     val state: StateFlow<GatewayUiState> = _state.asStateFlow()
 
     /** Last (requestsTotal, timestampMs) sample used for the per-minute rate. */
