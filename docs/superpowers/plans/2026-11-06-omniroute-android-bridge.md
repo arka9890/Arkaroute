@@ -276,7 +276,7 @@ git commit -m "feat(bridge): JNI bridge for gateway lifecycle with CI packaging 
 
 - [ ] **Step 2: Push test alone → CI RED** (same poll command; commit `test(config): encrypted config store tests`)
 
-- [ ] **Step 3: Implement** `Models.kt` (serializers via `kotlinx.serialization.json.Json { ignoreUnknownKeys = true; explicitNulls = false }`), `CryptoEngine.kt`, `KeystoreCryptoEngine.kt` (standard `KeyGenParameterSpec` + `Cipher.getInstance("AES/GCM/NoPadding")`, 128-bit tag, IV = first 12 bytes), `ConfigStore.kt` (load: read file → decrypt → parse wrapper → on ANY failure: write raw bytes to `config.corrupt`, return defaults; save: serialize wrapper → encrypt → write).
+- [ ] **Step 3: Implement** `Models.kt` (serializers via `kotlinx.serialization.json.Json { ignoreUnknownKeys = true; explicitNulls = false; encodeDefaults = true }` — `encodeDefaults` required: kotlinx default `false` drops default-valued fields, so the pinned `coreJson_matches_wire_names` test cannot pass on defaults without it, and the Rust core always serializes every field), `CryptoEngine.kt`, `KeystoreCryptoEngine.kt` (standard `KeyGenParameterSpec` + `Cipher.getInstance("AES/GCM/NoPadding")`, 128-bit tag, IV = first 12 bytes), `ConfigStore.kt` (load: read file → decrypt → parse wrapper → on ANY failure: write raw bytes to `config.corrupt`, return defaults; save: serialize wrapper → encrypt → write).
 
 - [ ] **Step 4: Push impl → CI GREEN**; record run id.
 
