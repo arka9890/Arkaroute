@@ -28,7 +28,7 @@ class KeystoreCryptoEngine : CryptoEngine {
         val keyStore = KeyStore.getInstance("AndroidKeyStore")
         keyStore.load(null)
         if (keyStore.containsAlias(ALIAS)) {
-            val entry = keyStore.getEntry(ALIAS, null) as javax.crypto.SecretKeyEntry
+            val entry = keyStore.getEntry(ALIAS, null) as KeyStore.SecretKeyEntry
             return entry.secretKey as SecretKey
         }
         val keyGen = KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, "AndroidKeyStore")
