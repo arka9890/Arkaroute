@@ -5,6 +5,7 @@ pub mod cli;
 pub mod config;
 pub mod dashboard;
 pub mod error;
+pub mod lifecycle;
 pub mod protocol;
 pub mod providers;
 pub mod routing;
