@@ -82,7 +82,11 @@ class ShellTest {
         }
         composeRule.onNodeWithContentDescription(context.getString(R.string.avatar_desc)).performClick()
         composeRule.onNodeWithText(context.getString(R.string.settings_title)).assertIsDisplayed()
-        composeRule.performBackNavigation()
+        // performBackNavigation() does not exist in Compose 1.7.3 (BOM 2024.10.01); dispatch directly —
+        // equivalent effect: routes the back press through the activity's OnBackPressedDispatcher,
+        // which is what AppShell's BackHandler listens to.
+        composeRule.runOnUiThread { composeRule.activity.onBackPressedDispatcher.onBackPressed() }
+        composeRule.waitForIdle()
         assertEquals(0, composeRule.onAllNodesWithText(context.getString(R.string.settings_title)).fetchSemanticsNodes().size)
         composeRule.onNodeWithText(context.getString(R.string.tab_service)).assertIsDisplayed()
     }
