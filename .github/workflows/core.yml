@@ -15,3 +15,5 @@ jobs:
           workspaces: core
       - name: Test
         run: cargo test --manifest-path core/Cargo.toml
+      - name: Test bridge
+        run: cargo test --manifest-path bridge/Cargo.toml

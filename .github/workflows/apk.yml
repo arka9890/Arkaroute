@@ -9,6 +9,16 @@ jobs:
         with: { distribution: temurin, java-version: "17" }
       - uses: gradle/actions/setup-gradle@v4
         with: { gradle-version: "8.9" }
+      - uses: dtolnay/rust-toolchain@stable
+        with: { targets: aarch64-linux-android }
+      - uses: nttld/setup-ndk@v1
+        with: { ndk-version: r26c }
+      - run: cargo install cargo-ndk --locked
+      - run: cargo ndk -t arm64-v8a -o app/src/main/jniLibs build --manifest-path bridge/Cargo.toml --release
+      - name: Check JNI symbols
+        run: nm -D app/src/main/jniLibs/arm64-v8a/libomniroute_bridge.so | grep -E 'Java_com_omniroute_app_bridge_NativeGateway_(startServer|stopServer|isRunning)'
       - run: gradle :app:testDebugUnitTest :app:assembleDebug
+      - name: Check .so packaged in APK
+        run: unzip -l app/build/outputs/apk/debug/*.apk | grep 'lib/arm64-v8a/libomniroute_bridge.so'
       - uses: actions/upload-artifact@v4
         with: { name: app-debug, path: app/build/outputs/apk/debug/*.apk }
