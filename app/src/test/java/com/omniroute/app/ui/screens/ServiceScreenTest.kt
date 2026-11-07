@@ -91,7 +91,7 @@ class ServiceScreenTest {
 
     @Test fun daemon_toggle_dispatches_stop_when_running() {
         var captured: Boolean? = null
-        setScreen(runningState()) { captured = it }
+        setScreen(runningState(), onDaemon = { captured = it })
         composeRule.onNodeWithContentDescription(context.getString(R.string.daemon_desc)).performClick()
         assertEquals(false, captured)
     }
