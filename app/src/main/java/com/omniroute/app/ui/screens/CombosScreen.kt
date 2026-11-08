@@ -163,7 +163,7 @@ fun CombosScreen(
                 }
             }
 
-            state.app.clientKeys.forEach { key ->
+            state.app.clientKeys.forEachIndexed { index, key ->
                 ClientKeyRow(
                     key = key,
                     onCopy = {
@@ -171,10 +171,15 @@ fun CombosScreen(
                         onToast("Disalin")
                     },
                     onDelete = {
-                        val newKeys = state.app.clientKeys.filterNot {
-                            it.label == key.label && it.secret == key.secret
+                        // Delete by clicked row identity, not by secret match:
+                        // duplicates sharing a secret must not over-delete.
+                        val newKeys = state.app.clientKeys.filterIndexed { i, _ -> i != index }
+                        val gwIndex = state.core.gatewayKeys.indexOf(key.secret)
+                        val newGateway = if (gwIndex >= 0) {
+                            state.core.gatewayKeys.filterIndexed { i, _ -> i != gwIndex }
+                        } else {
+                            state.core.gatewayKeys
                         }
-                        val newGateway = state.core.gatewayKeys.filterNot { it == key.secret }
                         onSaveConfigAndRestart(
                             state.core.copy(gatewayKeys = newGateway),
                             state.app.copy(clientKeys = newKeys),

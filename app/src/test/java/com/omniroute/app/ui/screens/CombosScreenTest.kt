@@ -104,6 +104,28 @@ class CombosScreenTest {
         assertTrue(saved.second.clientKeys.any { it.label == "phone" && it.secret == "secret123" })
     }
 
+    @Test fun delete_duplicate_shared_secret_removes_one_only() {
+        val state = stateWith(
+            clientKeys = listOf(
+                ClientKey(label = "phone", secret = "secret123"),
+                ClientKey(label = "laptop", secret = "secret123"),
+            ),
+            gatewayKeys = listOf("secret123", "secret123"),
+        )
+        val captured = AtomicReference<Pair<GatewayConfigJson, AppMeta>?>(null)
+        setScreen(state, onSave = { core, app -> captured.set(core to app) })
+        composeRule.onNode(hasText("Client API Keys") and hasClickAction()).performClick()
+        composeRule.waitForIdle()
+        val hapusNodes = composeRule.onAllNodesWithText("Hapus")
+        hapusNodes[0].performScrollTo()
+        hapusNodes[0].performClick()
+        composeRule.waitForIdle()
+        val saved = captured.get()
+        assertEquals(1, saved!!.second.clientKeys.size)
+        assertEquals(1, saved.first.gatewayKeys.size)
+        assertEquals("laptop", saved.second.clientKeys[0].label)
+    }
+
     @Test fun simulator_disabled_without_combos() {
         val state = stateWith(combos = emptyList())
         setScreen(state)
