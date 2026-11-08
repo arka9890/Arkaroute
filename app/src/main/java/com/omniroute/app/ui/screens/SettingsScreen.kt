@@ -361,7 +361,7 @@ fun SettingsScreen(
                 }
                 Switch(
                     checked = false,
-                    onCheckedChange = null,
+                    onCheckedChange = {},
                     enabled = false,
                     modifier = Modifier.semantics { contentDescription = "Cloudflare Quick Tunnel" },
                 )

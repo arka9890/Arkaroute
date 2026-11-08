@@ -13,8 +13,6 @@ import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextClearance
 import androidx.compose.ui.test.performTextInput
-import androidx.compose.ui.test.performTouchInput
-import androidx.compose.ui.test.swipeRight
 import com.omniroute.app.R
 import com.omniroute.app.config.AppMeta
 import com.omniroute.app.config.GatewayConfigJson
@@ -96,9 +94,9 @@ class SettingsScreenTest {
         composeRule.onNode(hasText("Soft Putty") and hasClickAction()).performClick()
         composeRule.waitForIdle()
         assertEquals("soft", capturedMeta.get()?.themeMode)
-        // Drive the depth slider: swipe right increases clayDepth from 85.
+        // Drive the depth slider: tap-to-seek moves clayDepth off 85.
         composeRule.onNodeWithContentDescription("Kedalaman Efek Clay slider").performScrollTo()
-        composeRule.onNodeWithContentDescription("Kedalaman Efek Clay slider").performTouchInput { swipeRight() }
+        composeRule.onNodeWithContentDescription("Kedalaman Efek Clay slider").performClick()
         composeRule.waitForIdle()
         assertTrue(capturedMeta.get()?.clayDepth != null && capturedMeta.get()!!.clayDepth != 85)
     }
