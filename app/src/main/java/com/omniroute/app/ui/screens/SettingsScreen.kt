@@ -108,14 +108,14 @@ fun SettingsScreen(
         app = newApp
         onSaveAppMeta(newApp)
         onSaveConfigAndRestart(core, newApp)
-        onToast(stringResource(R.string.settings_saved_toast))
+        onToast(context.getString(R.string.settings_saved_toast))
     }
 
     fun saveCore(newCore: GatewayConfigJson, newApp: AppMeta = app) {
         core = newCore
         app = newApp
         onSaveConfigAndRestart(newCore, newApp)
-        onToast(stringResource(R.string.settings_saved_toast))
+        onToast(context.getString(R.string.settings_saved_toast))
     }
 
     fun processRestore(content: String?) {
@@ -124,7 +124,7 @@ fun SettingsScreen(
             val wrapper = ConfigJson.decodeFromString<ConfigWrapper>(content)
             saveCore(wrapper.core, wrapper.app)
         } catch (e: Exception) {
-            onToast(stringResource(R.string.settings_restore_error))
+            onToast(context.getString(R.string.settings_restore_error))
         }
     }
 
