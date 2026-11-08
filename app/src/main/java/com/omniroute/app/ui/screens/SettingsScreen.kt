@@ -134,7 +134,7 @@ fun SettingsScreen(
         try {
             val json = ConfigJson.encodeToString(ConfigWrapper(core = core, app = app))
             context.contentResolver.openOutputStream(uri)?.use { it.write(json.toByteArray()) }
-            onToast(stringResource(R.string.settings_saved_toast))
+            onToast(context.getString(R.string.settings_saved_toast))
         } catch (e: Exception) {
             onToast(e.message ?: "error")
         }
@@ -304,7 +304,7 @@ fun SettingsScreen(
                 ClayButton(onClick = {
                     val p = portInput.toIntOrNull()
                     if (p == null || p !in 1..65535) {
-                        portError = stringResource(R.string.settings_port_error)
+                        portError = context.getString(R.string.settings_port_error)
                     } else {
                         portError = null
                         saveCore(core.copy(port = p), app)
@@ -330,7 +330,7 @@ fun SettingsScreen(
                 ClayButton(onClick = {
                     val m = timeoutInput.toIntOrNull()
                     if (m == null || m < 1) {
-                        timeoutError = stringResource(R.string.settings_timeout_error)
+                        timeoutError = context.getString(R.string.settings_timeout_error)
                     } else {
                         timeoutError = null
                         saveCore(core.copy(requestTimeoutMs = m.toLong() * 60000L), app)
@@ -380,7 +380,7 @@ fun SettingsScreen(
             ClayButton(onClick = {
                 AppCache.clear(context)
                 cacheSize = 0L
-                onToast(stringResource(R.string.cache_cleared_toast))
+                onToast(context.getString(R.string.cache_cleared_toast))
             }, modifier = Modifier.fillMaxWidth()) {
                 Text(text = stringResource(R.string.settings_clear_cache))
             }
@@ -452,13 +452,13 @@ fun SettingsScreen(
                     core = newCore
                     app = newApp
                     onSaveConfigAndRestart(newCore, newApp)
-                    onToast(stringResource(R.string.settings_saved_toast))
+                    onToast(context.getString(R.string.settings_saved_toast))
                     showKeyDialog = false
                 }) { Text(stringResource(R.string.settings_create_key_save)) }
                 TextButton(onClick = {
                     val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
                     clipboard.setPrimaryClip(android.content.ClipData.newPlainText("key", key))
-                    onToast(stringResource(R.string.logs_copied_toast))
+                    onToast(context.getString(R.string.logs_copied_toast))
                 }) { Text(stringResource(R.string.settings_copy)) }
             },
             dismissButton = {
