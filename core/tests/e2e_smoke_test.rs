@@ -123,6 +123,7 @@ fn combo(name: &str, steps: Vec<(&str, &str)>) -> Combo {
                 model: m.into(),
             })
             .collect(),
+        enabled: true,
     }
 }
 

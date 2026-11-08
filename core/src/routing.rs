@@ -130,14 +130,19 @@ struct StreamState {
 pub fn resolve_model(model: &str, cfg: &GatewayConfig) -> Result<ResolvedModel, ResolveError> {
     // `combo/<name>` prefix wins: it names an explicit fallback chain.
     if let Some(name) = model.strip_prefix("combo/") {
-        return cfg
-            .combo(name)
-            .map(|c| ResolvedModel::Combo(c.name.clone()))
-            .ok_or(ResolveError::UnknownCombo(name.to_string()));
+        if let Some(c) = cfg.combo(name) {
+            if c.enabled {
+                return Ok(ResolvedModel::Combo(c.name.clone()));
+            }
+        }
+        return Err(ResolveError::UnknownCombo(name.to_string()));
     }
-    // An exact combo name wins over a bare provider model of the same name.
+    // An exact combo name wins over a bare provider model of the same name,
+    // but only when it is enabled.
     if let Some(combo) = cfg.combo(model) {
-        return Ok(ResolvedModel::Combo(combo.name.clone()));
+        if combo.enabled {
+            return Ok(ResolvedModel::Combo(combo.name.clone()));
+        }
     }
     // `provider/model` → direct.
     if let Some((provider_id, upstream_model)) = model.split_once('/') {
@@ -152,7 +157,9 @@ pub fn resolve_model(model: &str, cfg: &GatewayConfig) -> Result<ResolvedModel, 
     // Bare unknown name → configured default combo, else unknown.
     if let Some(name) = &cfg.default_combo {
         if let Some(combo) = cfg.combo(name) {
-            return Ok(ResolvedModel::Combo(combo.name.clone()));
+            if combo.enabled {
+                return Ok(ResolvedModel::Combo(combo.name.clone()));
+            }
         }
     }
     Err(ResolveError::UnknownModel(model.to_string()))

@@ -144,6 +144,9 @@ async fn models_handler(
         }
     }
     for combo in &cfg.combos {
+        if !combo.enabled {
+            continue;
+        }
         data.push(json!({
             "id": combo.name,
             "object": "model",

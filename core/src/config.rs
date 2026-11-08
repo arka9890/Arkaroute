@@ -40,6 +40,10 @@ pub struct ComboStep {
     pub model: String,
 }
 
+fn default_true() -> bool {
+    true
+}
+
 /// A named chain of provider/model steps.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Combo {
@@ -47,6 +51,8 @@ pub struct Combo {
     pub name: String,
     #[serde(default)]
     pub steps: Vec<ComboStep>,
+    #[serde(default = "default_true")]
+    pub enabled: bool,
 }
 
 /// Root gateway configuration, persisted as JSON.

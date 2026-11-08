@@ -18,6 +18,7 @@ fn sample_config() -> GatewayConfig {
             provider: "openai".into(),
             model: "gpt-5".into(),
         }],
+        enabled: true,
     });
     cfg.default_combo = Some("translate".into());
     cfg
