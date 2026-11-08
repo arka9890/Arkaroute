@@ -118,6 +118,16 @@ fun SettingsScreen(
         onToast(stringResource(R.string.settings_saved_toast))
     }
 
+    fun processRestore(content: String?) {
+        if (content == null) return
+        try {
+            val wrapper = ConfigJson.decodeFromString<ConfigWrapper>(content)
+            saveCore(wrapper.core, wrapper.app)
+        } catch (e: Exception) {
+            onToast(stringResource(R.string.settings_restore_error))
+        }
+    }
+
     // SAF launchers (production)
     val createDocLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri: Uri? ->
         if (uri == null) return@rememberLauncherForActivityResult
@@ -135,16 +145,6 @@ fun SettingsScreen(
             context.contentResolver.openInputStream(uri)?.bufferedReader()?.use { it.readText() }
         } catch (e: Exception) { null }
         processRestore(content)
-    }
-
-    fun processRestore(content: String?) {
-        if (content == null) return
-        try {
-            val wrapper = ConfigJson.decodeFromString<ConfigWrapper>(content)
-            saveCore(wrapper.core, wrapper.app)
-        } catch (e: Exception) {
-            onToast(stringResource(R.string.settings_restore_error))
-        }
     }
 
     fun restoreContentFromSeam(): String? {
