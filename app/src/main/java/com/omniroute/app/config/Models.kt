@@ -43,6 +43,7 @@ data class ComboStepJson(
 data class ComboJson(
     val name: String = "",
     val steps: List<ComboStepJson> = emptyList(),
+    val enabled: Boolean = true,
 )
 
 @Serializable
