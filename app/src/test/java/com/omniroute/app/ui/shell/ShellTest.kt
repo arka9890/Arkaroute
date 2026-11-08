@@ -73,7 +73,6 @@ class ShellTest {
         }
         composeRule.onNodeWithContentDescription(context.getString(R.string.avatar_desc)).performClick()
         composeRule.onNodeWithText(context.getString(R.string.settings_title)).assertIsDisplayed()
-        composeRule.onNodeWithText(context.getString(R.string.settings_placeholder)).assertIsDisplayed()
     }
 
     @Test fun back_from_settings_returns_to_tab() {

@@ -72,7 +72,13 @@ class MainActivity : ComponentActivity() {
             val state by repository.state.collectAsState()
             ClayTheme(colors = clayColorsFor(app.themeMode, app.highContrast), depth = app.clayDepth) {
                 PermissionsRequest()
-                AppShell(port = core.port) { tab ->
+                AppShell(
+                    port = core.port,
+                    state = state,
+                    onSaveConfigAndRestart = { c, a -> repository.saveConfigAndRestart(c, a) },
+                    onSaveAppMeta = { a -> repository.saveAppMeta(a) },
+                    onToast = { msg -> Toast.makeText(context, msg, Toast.LENGTH_SHORT).show() },
+                ) { tab ->
                     when (tab) {
                         Tab.SERVICE -> ServiceScreen(
                             state = state,

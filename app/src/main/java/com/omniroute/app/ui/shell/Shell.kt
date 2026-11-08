@@ -42,7 +42,11 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.omniroute.app.R
+import com.omniroute.app.data.GatewayUiState
+import com.omniroute.app.config.AppMeta
+import com.omniroute.app.config.GatewayConfigJson
 import com.omniroute.app.ui.components.ClayCard
+import com.omniroute.app.ui.screens.SettingsScreen
 import com.omniroute.app.ui.theme.ClayTheme
 
 enum class Tab { SERVICE, WEBVIEW, PROVIDERS, COMBOS, ROUTES }
@@ -70,7 +74,22 @@ private fun tabLabelRes(tab: Tab): Int = when (tab) {
  * placeholder behind the avatar.
  */
 @Composable
-fun AppShell(startTab: Tab = Tab.SERVICE, port: Int, content: @Composable (Tab) -> Unit) {
+fun AppShell(
+    startTab: Tab = Tab.SERVICE,
+    port: Int,
+    state: GatewayUiState = GatewayUiState(
+        running = false,
+        health = null,
+        requestsPerMinute = 0,
+        core = GatewayConfigJson(),
+        app = AppMeta(),
+        lastError = null,
+    ),
+    onSaveConfigAndRestart: (GatewayConfigJson, AppMeta) -> Unit = { _, _ -> },
+    onSaveAppMeta: (AppMeta) -> Unit = {},
+    onToast: (String) -> Unit = {},
+    content: @Composable (Tab) -> Unit,
+) {
     var selectedTab by rememberSaveable { mutableStateOf(startTab) }
     var showSettings by rememberSaveable { mutableStateOf(false) }
     // Scaffolding cycle oled <-> system; Task 2 wires this to ConfigStore.
@@ -96,7 +115,12 @@ fun AppShell(startTab: Tab = Tab.SERVICE, port: Int, content: @Composable (Tab) 
                 .fillMaxWidth(),
         ) {
             if (showSettings) {
-                SettingsPlaceholder()
+                SettingsScreen(
+                    state = state,
+                    onSaveConfigAndRestart = onSaveConfigAndRestart,
+                    onSaveAppMeta = onSaveAppMeta,
+                    onToast = onToast,
+                )
             } else {
                 content(selectedTab)
             }
