@@ -37,16 +37,26 @@ impl AuthError {
 
 /// Authorize a request against `cfg`'s gateway key rules.
 ///
-/// - Keys configured: a valid `Authorization: Bearer <key>` is required
-///   regardless of peer. Missing header → [`AuthError::MissingKey`], wrong
+/// - Loopback peer: always allowed, regardless of configured gateway keys.
+///   This keeps dashboard (`fetch('/health')` from a browser), the app's
+///   loopback polling, ping callers, and the simulator working after a user
+///   creates a gateway key via the Settings LAN flow — browsers cannot
+///   attach `Authorization` headers to `fetch('/health')`.
+/// - Non-loopback peer with keys configured: a valid `Authorization: Bearer
+///   <key>` is required. Missing header → [`AuthError::MissingKey`], wrong
 ///   key (or a non-bearer credential) → [`AuthError::InvalidKey`].
-/// - No keys configured: allowed only from a loopback peer; otherwise
-///   [`AuthError::ForbiddenOrigin`].
+/// - Non-loopback peer with no keys configured: [`AuthError::ForbiddenOrigin`].
 pub fn authorize(
     cfg: &GatewayConfig,
     headers: &HeaderMap,
     peer_is_loopback: bool,
 ) -> Result<(), AuthError> {
+    // Loopback is always trusted — dashboard and app polling must keep
+    // working even after gateway keys are configured.
+    if peer_is_loopback {
+        return Ok(());
+    }
+
     if !cfg.gateway_keys.is_empty() {
         let raw = headers.get(AUTHORIZATION).ok_or(AuthError::MissingKey)?;
         let value = raw.to_str().map_err(|_| AuthError::InvalidKey)?;
@@ -66,8 +76,5 @@ pub fn authorize(
         return Err(AuthError::InvalidKey);
     }
 
-    if peer_is_loopback {
-        return Ok(());
-    }
     Err(AuthError::ForbiddenOrigin)
 }

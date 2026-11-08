@@ -131,7 +131,11 @@ fn gateway(base_url: &str, keys: Vec<String>) -> GatewayConfig {
 async fn chat_requires_key_when_keys_configured() {
     let mut cfg = GatewayConfig::default();
     cfg.gateway_keys = vec!["k".into()];
-    let (addr, handle) = spawn(app_state(cfg)).await;
+    // Remote peer (no connect-info => treated as non-loopback): key required.
+    let router = build_router(app_state(cfg));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let handle = tokio::spawn(async move { axum::serve(listener, router).await.unwrap(); });
     let resp = Client::new()
         .post(format!("http://{addr}/v1/chat/completions"))
         .json(&json!({"model":"x","messages":[{"role":"user","content":"hi"}]}))
@@ -269,7 +273,11 @@ async fn all_providers_failed_is_502() {
 async fn health_requires_key_when_keys_configured() {
     let mut cfg = GatewayConfig::default();
     cfg.gateway_keys = vec!["k".into()];
-    let (addr, handle) = spawn(app_state(cfg)).await;
+    // Remote peer (no connect-info => treated as non-loopback): key required.
+    let router = build_router(app_state(cfg));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let handle = tokio::spawn(async move { axum::serve(listener, router).await.unwrap(); });
     let resp = Client::new()
         .get(format!("http://{addr}/health"))
         .send()

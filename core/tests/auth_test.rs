@@ -89,3 +89,22 @@ fn empty_configured_key_cannot_authenticate() {
         .unwrap_err();
     assert_eq!(err.status(), 401);
 }
+
+#[test]
+fn loopback_allowed_even_with_keys_configured() {
+    let cfg = keys_config(&["k"]);
+
+    // Regression: after a gateway key is created, loopback callers without a
+    // Bearer header (dashboard fetch('/health'), app polling, simulator)
+    // must not get 401.
+    assert_eq!(authorize(&cfg, &HeaderMap::new(), true), Ok(()));
+}
+
+#[test]
+fn nonloopback_requires_bearer_when_keys_configured() {
+    let cfg = keys_config(&["k"]);
+
+    let err = authorize(&cfg, &HeaderMap::new(), false).unwrap_err();
+    assert_eq!(err, AuthError::MissingKey);
+    assert_eq!(err.status(), 401);
+}

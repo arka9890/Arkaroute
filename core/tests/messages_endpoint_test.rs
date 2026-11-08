@@ -142,7 +142,11 @@ fn gateway(base_url: &str, keys: Vec<String>) -> GatewayConfig {
 async fn messages_endpoint_requires_key() {
     let mut cfg = GatewayConfig::default();
     cfg.gateway_keys = vec!["k".into()];
-    let (addr, handle) = spawn(app_state(cfg)).await;
+    // Remote peer (no connect-info => treated as non-loopback): key required.
+    let router = build_router(app_state(cfg));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let handle = tokio::spawn(async move { axum::serve(listener, router).await.unwrap(); });
     let resp = Client::new()
         .post(format!("http://{addr}/v1/messages"))
         .json(&json!({"model":"x","max_tokens":10,"messages":[{"role":"user","content":"hi"}]}))
