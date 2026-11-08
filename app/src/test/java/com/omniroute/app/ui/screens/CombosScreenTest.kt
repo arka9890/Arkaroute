@@ -83,7 +83,7 @@ class CombosScreenTest {
         val state = stateWith(combos = listOf(ComboJson(name = "c1", steps = emptyList(), enabled = true)))
         val captured = AtomicReference<Pair<GatewayConfigJson, AppMeta>?>(null)
         setScreen(state, onSave = { core, app -> captured.set(core to app) })
-        composeRule.onNode(isToggleable()).performClick()
+        composeRule.onNodeWithContentDescription("toggle enabled").performClick()
         composeRule.waitForIdle()
         val saved = captured.get()
         assertEquals(false, saved!!.first.combos[0].enabled)
