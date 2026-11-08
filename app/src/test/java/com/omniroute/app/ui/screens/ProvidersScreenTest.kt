@@ -90,7 +90,7 @@ class ProvidersScreenTest {
             providerLimits = mapOf("p1" to 1_000_000L),
         )
         setScreen(state)
-        composeRule.onNodeWithText("25%").assertIsDisplayed()
+        composeRule.onAllNodesWithText("25%").assertCount(2)
     }
 
     @Test fun kind_filter_chips_narrow_list() {
@@ -105,6 +105,7 @@ class ProvidersScreenTest {
         composeRule.onNodeWithText("ant1").assertIsDisplayed()
 
         composeRule.onNodeWithText("OpenAI-compatible").performClick()
+        composeRule.advanceTimeBy(100)
         composeRule.waitForIdle()
         composeRule.onNodeWithText("oai1").assertIsDisplayed()
         assertEquals(0, composeRule.onAllNodesWithText("ant1").fetchSemanticsNodes().size)
