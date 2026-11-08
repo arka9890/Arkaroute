@@ -27,6 +27,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -88,10 +89,20 @@ fun AppShell(
     onSaveConfigAndRestart: (GatewayConfigJson, AppMeta) -> Unit = { _, _ -> },
     onSaveAppMeta: (AppMeta) -> Unit = {},
     onToast: (String) -> Unit = {},
+    // Routes CTAs set this to a combo name ("" = new combo); the shell
+    // switches to the Combos tab so CombosScreen can open the editor.
+    pendingComboEditor: String? = null,
     content: @Composable (Tab) -> Unit,
 ) {
     var selectedTab by rememberSaveable { mutableStateOf(startTab) }
     var showSettings by rememberSaveable { mutableStateOf(false) }
+
+    LaunchedEffect(pendingComboEditor) {
+        if (pendingComboEditor != null) {
+            selectedTab = Tab.COMBOS
+            showSettings = false
+        }
+    }
 
     BackHandler(enabled = showSettings) { showSettings = false }
 

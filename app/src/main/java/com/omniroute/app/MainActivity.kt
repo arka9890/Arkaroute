@@ -21,7 +21,9 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import kotlinx.coroutines.CoroutineScope
@@ -70,6 +72,11 @@ class MainActivity : ComponentActivity() {
             DisposableEffect(pollScope) { onDispose { pollScope.cancel() } }
             LaunchedEffect(repository) { repository.startPolling(pollScope) }
             val state by repository.state.collectAsState()
+            // Shared navigation state: Routes CTAs request the combo editor
+            // for a combo name ("" = new combo); null = no pending request.
+            // AppShell switches to the Combos tab; CombosScreen opens the
+            // editor, then consumes the request.
+            var pendingComboEditor by remember { mutableStateOf<String?>(null) }
             ClayTheme(colors = clayColorsFor(state.app.themeMode, state.app.highContrast), depth = state.app.clayDepth) {
                 PermissionsRequest()
                 AppShell(
@@ -78,6 +85,7 @@ class MainActivity : ComponentActivity() {
                     onSaveConfigAndRestart = { c, a -> repository.saveConfigAndRestart(c, a) },
                     onSaveAppMeta = { a -> repository.saveAppMeta(a) },
                     onToast = { msg -> Toast.makeText(context, msg, Toast.LENGTH_SHORT).show() },
+                    pendingComboEditor = pendingComboEditor,
                 ) { tab ->
                     when (tab) {
                         Tab.SERVICE -> ServiceScreen(
@@ -134,6 +142,8 @@ class MainActivity : ComponentActivity() {
                                 onToast = { msg ->
                                     Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
                                 },
+                                editorRequest = pendingComboEditor,
+                                onEditorRequestConsumed = { pendingComboEditor = null },
                             )
                         Tab.ROUTES ->
                             RoutesScreen(
@@ -145,7 +155,7 @@ class MainActivity : ComponentActivity() {
                                     Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
                                 },
                                 onOpenComboEditor = { comboName ->
-                                    Toast.makeText(context, comboName, Toast.LENGTH_SHORT).show()
+                                    pendingComboEditor = comboName
                                 },
                             )
                     }

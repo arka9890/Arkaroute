@@ -18,6 +18,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TextField
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -52,6 +53,9 @@ fun CombosScreen(
     onSaveConfigAndRestart: (GatewayConfigJson, AppMeta) -> Unit = { _, _ -> },
     onToast: (String) -> Unit = {},
     simulatorTransport: (suspend (String, String) -> Triple<Int, String, String?>)? = null,
+    // Routes CTAs request the editor for a combo name ("" = new combo).
+    editorRequest: String? = null,
+    onEditorRequestConsumed: () -> Unit = {},
 ) {
     val colors = ClayTheme.colors
     val clipboardManager = LocalClipboardManager.current
@@ -59,6 +63,16 @@ fun CombosScreen(
     var showEditor by remember { mutableStateOf(false) }
     var editingCombo by remember { mutableStateOf<ComboJson?>(null) }
     var showAddKey by remember { mutableStateOf(false) }
+
+    LaunchedEffect(editorRequest) {
+        val req = editorRequest
+        if (req != null) {
+            segment = "combos"
+            editingCombo = if (req.isBlank()) null else state.core.combos.firstOrNull { it.name == req }
+            showEditor = true
+            onEditorRequestConsumed()
+        }
+    }
 
     val resolvedBaseUrl = baseUrl.ifBlank {
         val core = state.core
