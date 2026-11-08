@@ -92,8 +92,6 @@ fun AppShell(
 ) {
     var selectedTab by rememberSaveable { mutableStateOf(startTab) }
     var showSettings by rememberSaveable { mutableStateOf(false) }
-    // Scaffolding cycle oled <-> system; Task 2 wires this to ConfigStore.
-    var systemTheme by rememberSaveable { mutableStateOf(false) }
 
     BackHandler(enabled = showSettings) { showSettings = false }
 
@@ -105,8 +103,15 @@ fun AppShell(
     ) {
         Header(
             port = port,
-            systemTheme = systemTheme,
-            onThemeClick = { systemTheme = !systemTheme },
+            systemTheme = state.app.themeMode == "system",
+            onThemeClick = {
+                val nextTheme = when (state.app.themeMode) {
+                    "oled" -> "soft"
+                    "soft" -> "system"
+                    else -> "oled"
+                }
+                onSaveAppMeta(state.app.copy(themeMode = nextTheme))
+            },
             onAvatarClick = { showSettings = true },
         )
         Box(
@@ -198,7 +203,7 @@ private fun Header(
                 fontFamily = FontFamily.Monospace,
             )
         }
-        // Theme icon cycling oled <-> system (reactive icon only in this task)
+        // Theme icon cycling oled -> soft -> system; persisted via onSaveAppMeta.
         IconButton(onClick = onThemeClick) {
             Icon(
                 imageVector = if (systemTheme) Icons.Filled.LightMode else Icons.Filled.DarkMode,
