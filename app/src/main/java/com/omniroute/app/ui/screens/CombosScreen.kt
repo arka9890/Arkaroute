@@ -1,5 +1,6 @@
 package com.omniroute.app.ui.screens
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -28,8 +29,9 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.compose.ui.unit.sp
 import com.omniroute.app.config.AppMeta
 import com.omniroute.app.config.ClientKey
@@ -41,8 +43,6 @@ import com.omniroute.app.ui.components.ClayButton
 import com.omniroute.app.ui.components.ClayCard
 import com.omniroute.app.ui.components.ClayChip
 import com.omniroute.app.ui.theme.ClayTheme
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
 
 @Composable
 fun CombosScreen(
@@ -54,6 +54,7 @@ fun CombosScreen(
     simulatorTransport: (suspend (String, String) -> Triple<Int, String, String?>)? = null,
 ) {
     val colors = ClayTheme.colors
+    val clipboardManager = LocalClipboardManager.current
     var segment by remember { mutableStateOf("combos") } // combos | keys
     var showEditor by remember { mutableStateOf(false) }
     var editingCombo by remember { mutableStateOf<ComboJson?>(null) }
@@ -165,7 +166,10 @@ fun CombosScreen(
             state.app.clientKeys.forEach { key ->
                 ClientKeyRow(
                     key = key,
-                    onCopy = { onToast("Disalin") },
+                    onCopy = {
+                        clipboardManager.setText(AnnotatedString(key.secret))
+                        onToast("Disalin")
+                    },
                     onDelete = {
                         val newKeys = state.app.clientKeys.filterNot {
                             it.label == key.label && it.secret == key.secret
@@ -229,7 +233,7 @@ private fun ComboCard(
     onClick: () -> Unit,
 ) {
     val colors = ClayTheme.colors
-    ClayCard(modifier = Modifier.fillMaxWidth()) {
+    ClayCard(modifier = Modifier.fillMaxWidth().clickable(onClick = onClick)) {
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
             Text(
                 text = combo.name,

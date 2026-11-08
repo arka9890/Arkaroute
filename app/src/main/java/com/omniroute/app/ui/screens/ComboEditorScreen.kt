@@ -44,7 +44,6 @@ fun ComboEditorScreen(
     val colors = ClayTheme.colors
     var name by remember { mutableStateOf(combo?.name ?: "") }
     val steps = remember { mutableStateListOf<ComboStepJson>().apply { combo?.steps?.let { addAll(it) } } }
-    var expandedProviderIndex by remember { mutableStateOf<Int?>(null) }
 
     Column(
         modifier = Modifier

@@ -29,6 +29,7 @@ import com.omniroute.app.ui.theme.ClayTheme
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import org.json.JSONArray
 import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
@@ -117,7 +118,18 @@ fun SimulatorCard(
                 status = "Memvalidasi Rantai..."
                 result = ""
                 scope.launch {
-                    val payload = """{"model":"$selectedCombo","messages":[{"role":"user","content":"${prompt.replace("\"", "\\\"")}"}],"stream":false}"""
+                    val payload = JSONObject()
+                        .put("model", selectedCombo)
+                        .put(
+                            "messages",
+                            JSONArray().put(
+                                JSONObject()
+                                    .put("role", "user")
+                                    .put("content", prompt),
+                            ),
+                        )
+                        .put("stream", false)
+                        .toString()
                     val (code, body, err) = if (transport != null) {
                         // Injected (test) transport: call directly so it resolves
                         // synchronously on the Main dispatcher — no IO-hop needed.

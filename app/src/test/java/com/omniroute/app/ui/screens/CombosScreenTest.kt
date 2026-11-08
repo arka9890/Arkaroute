@@ -32,9 +32,6 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
-import java.io.BufferedReader
-import java.io.InputStreamReader
-import java.net.ServerSocket
 import java.util.concurrent.atomic.AtomicReference
 
 @RunWith(RobolectricTestRunner::class)
@@ -77,7 +74,6 @@ class CombosScreenTest {
         assertTrue(composeRule.onAllNodesWithText("combo-alpha").fetchSemanticsNodes().isNotEmpty())
         composeRule.onNode(hasText("Client API Keys") and hasClickAction()).performClick()
         composeRule.waitForIdle()
-        composeRule.onNodeWithText("combo-alpha").let { /* gone */ }
         assertEquals(0, composeRule.onAllNodesWithText("combo-alpha").fetchSemanticsNodes().size)
     }
 
@@ -106,28 +102,6 @@ class CombosScreenTest {
         val saved = captured.get()
         assertTrue(saved!!.first.gatewayKeys.contains("secret123"))
         assertTrue(saved.second.clientKeys.any { it.label == "phone" && it.secret == "secret123" })
-    }
-
-    private fun startServer(responseCode: Int, body: String): Int {
-        val socket = ServerSocket(0)
-        val port = socket.localPort
-        Thread {
-            val client = socket.accept()
-            val reader = BufferedReader(InputStreamReader(client.getInputStream()))
-            // consume request
-            while (true) {
-                val line = reader.readLine() ?: break
-                if (line.isEmpty()) break
-            }
-            val out = client.getOutputStream()
-            val statusText = if (responseCode == 200) "OK" else "Bad Request"
-            val resp = "HTTP/1.1 $responseCode $statusText\r\nContent-Type: application/json\r\nContent-Length: ${body.toByteArray().size}\r\nConnection: close\r\n\r\n$body"
-            out.write(resp.toByteArray())
-            out.flush()
-            client.close()
-            socket.close()
-        }.start()
-        return port
     }
 
     @Test fun simulator_disabled_without_combos() {
