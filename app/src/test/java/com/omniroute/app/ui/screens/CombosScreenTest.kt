@@ -143,8 +143,9 @@ class CombosScreenTest {
         composeRule.onNodeWithText("Prompt").performTextInput("hi")
         composeRule.onNodeWithText("Kirim Uji").performClick()
         composeRule.waitForIdle()
-        Thread.sleep(1000)
-        composeRule.waitForIdle()
+        composeRule.waitUntil(timeoutMillis = 5000) {
+            composeRule.onAllNodesWithText("Halo").fetchSemanticsNodes().isNotEmpty()
+        }
         assertTrue(composeRule.onAllNodesWithText("Halo").fetchSemanticsNodes().isNotEmpty())
     }
 
@@ -155,8 +156,9 @@ class CombosScreenTest {
         composeRule.onNodeWithText("Prompt").performTextInput("hi")
         composeRule.onNodeWithText("Kirim Uji").performClick()
         composeRule.waitForIdle()
-        Thread.sleep(1000)
-        composeRule.waitForIdle()
+        composeRule.waitUntil(timeoutMillis = 5000) {
+            composeRule.onAllNodesWithText("Gagal").fetchSemanticsNodes().isNotEmpty()
+        }
         assertTrue(composeRule.onAllNodesWithText("Gagal").fetchSemanticsNodes().isNotEmpty())
     }
 }
