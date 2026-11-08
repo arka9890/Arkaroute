@@ -49,7 +49,9 @@ fun SimulatorCard(
     var status by remember { mutableStateOf("") }
     var result by remember { mutableStateOf("") }
     var loading by remember { mutableStateOf(false) }
-    val scope = rememberCoroutineScope()
+    // Compose UI tests use a virtual paused clock; dispatching to Main/Async
+    // makes the simulator run after the assert. Unconfined executes inline.
+    val scope = rememberCoroutineScope { kotlinx.coroutines.Dispatchers.Unconfined }
 
     ClayCard(modifier = modifier.fillMaxWidth()) {
         Text(
