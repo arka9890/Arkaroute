@@ -58,4 +58,9 @@
     <string name="webview_retry">Coba lagi</string>
     <string name="cf_tunnel_label">CF TUNNEL</string>
     <string name="cf_tunnel_soon">segera</string>
+    <string name="providers_add">+ Provider</string>
+    <string name="providers_filter_all">Semua</string>
+    <string name="providers_connected_format">%1$d Terhubung</string>
+    <string name="providers_segera">segera</string>
+    <string name="providers_fallback_title">Pohon Fallback Otomatis</string>
 </resources>

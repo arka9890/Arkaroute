@@ -38,6 +38,7 @@ import com.omniroute.app.data.HttpHealthSource
 import com.omniroute.app.data.JniGatewayBridge
 import com.omniroute.app.service.GatewayService
 import com.omniroute.app.ui.screens.ServiceScreen
+import com.omniroute.app.ui.screens.ProvidersScreen
 import com.omniroute.app.ui.screens.WebViewScreen
 import com.omniroute.app.ui.shell.AppShell
 import com.omniroute.app.ui.shell.Tab
@@ -106,7 +107,17 @@ class MainActivity : ComponentActivity() {
                                 )
                             },
                         )
-                        Tab.PROVIDERS, Tab.COMBOS, Tab.ROUTES ->
+                        Tab.PROVIDERS ->
+                            ProvidersScreen(
+                                state = state,
+                                onSaveConfigAndRestart = { core, app ->
+                                    repository.saveConfigAndRestart(core, app)
+                                },
+                                onToast = { msg ->
+                                    Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
+                                },
+                            )
+                        Tab.COMBOS, Tab.ROUTES ->
                             // Placeholder — each tab gets its own screen in a later task.
                             Box(Modifier.fillMaxSize())
                     }
