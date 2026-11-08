@@ -199,17 +199,17 @@ fun ProvidersScreen(
                         Spacer(Modifier.height(6.dp))
                     }
                     Text(
-                        text = "permintaan: ${stat?.requests ?: 0}",
+                        text = stat?.requests?.let { "permintaan: $it" } ?: "permintaan: —",
                         color = colors.onSurface.copy(alpha = 0.7f),
                         fontSize = 11.sp,
                     )
                     Text(
-                        text = "masuk: ${stat?.tokensIn ?: 0} · keluar: ${stat?.tokensOut ?: 0}",
+                        text = stat?.let { "masuk: ${it.tokensIn} · keluar: ${it.tokensOut}" } ?: "masuk: — · keluar: —",
                         color = colors.onSurface.copy(alpha = 0.7f),
                         fontSize = 11.sp,
                     )
                     Text(
-                        text = "latensi: ${stat?.lastLatencyMs ?: 0} ms",
+                        text = stat?.lastLatencyMs?.let { "latensi: $it ms" } ?: "latensi: —",
                         color = colors.onSurface.copy(alpha = 0.7f),
                         fontSize = 11.sp,
                     )

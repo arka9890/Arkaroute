@@ -184,7 +184,7 @@ fun RoutesScreen(
                         .padding(horizontal = 10.dp, vertical = 4.dp),
                 ) {
                     Text(
-                        text = "TERSINKRON",
+                        text = if (state.health != null) "TERSINKRON" else "OFFLINE",
                         color = colors.primary,
                         fontSize = 11.sp,
                         fontWeight = FontWeight.SemiBold,
@@ -287,7 +287,7 @@ fun RoutesScreen(
                 ) {
                     Column(Modifier.weight(1f)) {
                         Text("Latensi", color = colors.onSurface.copy(alpha = 0.6f), fontSize = 10.sp)
-                        Text("${stat?.lastLatencyMs ?: 0} ms", color = colors.onSurface, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                        Text(stat?.lastLatencyMs?.let { "$it ms" } ?: "—", color = colors.onSurface, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
                     }
                     Column(Modifier.weight(1f)) {
                         Text("Status", color = colors.onSurface.copy(alpha = 0.6f), fontSize = 10.sp)
@@ -295,7 +295,7 @@ fun RoutesScreen(
                     }
                     Column(Modifier.weight(1f)) {
                         Text("Permintaan", color = colors.onSurface.copy(alpha = 0.6f), fontSize = 10.sp)
-                        Text("${stat?.requests ?: 0}", color = colors.onSurface, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                        Text(stat?.requests?.toString() ?: "—", color = colors.onSurface, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
                     }
                 }
                 Spacer(Modifier.height(8.dp))
