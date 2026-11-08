@@ -5,6 +5,9 @@ import androidx.activity.ComponentActivity
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.hasClickAction
+import androidx.compose.ui.test.hasText
+import androidx.compose.ui.test.onNode
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import com.omniroute.app.R
@@ -101,17 +104,33 @@ class ProvidersScreenTest {
         )
         val state = stateWith(providers = providers)
         setScreen(state)
+        // Semua: all visible
         assertTrue(composeRule.onAllNodesWithText("oai1").fetchSemanticsNodes().isNotEmpty())
+        assertTrue(composeRule.onAllNodesWithText("oai2").fetchSemanticsNodes().isNotEmpty())
         assertTrue(composeRule.onAllNodesWithText("ant1").fetchSemanticsNodes().isNotEmpty())
-        // Chip "Semua" is the only uniquely-labeled chip (exactly one node);
-        // other chips are ambiguous with provider-kind badge text, so dangling
-        // on ambiguous clicks is avoided. Clicking "Semua" keeps all providers.
-        composeRule.onNodeWithText("Semua").performClick()
+
+        // OpenAI-compatible chip: disambiguate from kind badge via hasClickAction
+        composeRule.onNode(hasText("OpenAI-compatible") and hasClickAction()).performClick()
         composeRule.waitForIdle()
         assertTrue(composeRule.onAllNodesWithText("oai1").fetchSemanticsNodes().isNotEmpty())
+        assertTrue(composeRule.onAllNodesWithText("oai2").fetchSemanticsNodes().isNotEmpty())
+        assertEquals(0, composeRule.onAllNodesWithText("ant1").fetchSemanticsNodes().size)
+
+        // Anthropic chip: same disambiguation
+        composeRule.onNode(hasText("Anthropic") and hasClickAction()).performClick()
+        composeRule.waitForIdle()
+        assertTrue(composeRule.onAllNodesWithText("ant1").fetchSemanticsNodes().isNotEmpty())
+        assertEquals(0, composeRule.onAllNodesWithText("oai1").fetchSemanticsNodes().size)
+        assertEquals(0, composeRule.onAllNodesWithText("oai2").fetchSemanticsNodes().size)
+
+        // Back to Semua: all visible again
+        composeRule.onNode(hasText("Semua") and hasClickAction()).performClick()
+        composeRule.waitForIdle()
+        assertTrue(composeRule.onAllNodesWithText("oai1").fetchSemanticsNodes().isNotEmpty())
+        assertTrue(composeRule.onAllNodesWithText("ant1").fetchSemanticsNodes().isNotEmpty())
     }
 
-    @Test fun ping_button_disabled_without_providers() {
+    @Test fun ping_button_absent_without_providers() {
         val state = stateWith(providers = emptyList())
         setScreen(state)
         assertEquals(0, composeRule.onAllNodesWithText("Uji").fetchSemanticsNodes().size)

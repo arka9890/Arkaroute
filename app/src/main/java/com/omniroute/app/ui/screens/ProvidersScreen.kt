@@ -94,7 +94,7 @@ fun ProvidersScreen(
             }
             val (_, body, err) = result
             if (err != null) {
-                onToast("Tidak terjangkau: $err")
+                withContext(Dispatchers.Main) { onToast("Tidak terjangkau: $err") }
                 return@launch
             }
             try {
@@ -102,13 +102,14 @@ fun ProvidersScreen(
                 val ok = json.optBoolean("ok", false)
                 if (ok) {
                     val latency = json.optLong("latency_ms", 0L)
-                    onToast("Latensi: $latency ms")
+                    withContext(Dispatchers.Main) { onToast("Latensi: $latency ms") }
                 } else {
                     val error = json.optString("error", "error")
-                    onToast("Tidak terjangkau: $error")
+                    withContext(Dispatchers.Main) { onToast("Tidak terjangkau: $error") }
                 }
             } catch (e: Exception) {
-                onToast("Tidak terjangkau: ${e.message}")
+                val msg = e.message
+                withContext(Dispatchers.Main) { onToast("Tidak terjangkau: $msg") }
             }
         }
     }
@@ -142,7 +143,7 @@ fun ProvidersScreen(
             val hasManual = manualLimits.isNotEmpty()
             val totalUsage = state.health?.providers.orEmpty().sumOf { it.tokensIn + it.tokensOut }
             val totalLimit = manualLimits.values.sum()
-            val pct = if (hasManual && totalLimit > 0) (totalUsage * 100 / totalLimit).toInt() else 0
+            val pct = if (hasManual && totalLimit > 0) (totalUsage * 100 / totalLimit).toInt().coerceIn(0, 100) else 0
             SummaryPill(
                 label = "KUOTA TOTAL",
                 value = if (hasManual) "$pct%" else NO_VALUE,
@@ -177,13 +178,13 @@ fun ProvidersScreen(
                         fontWeight = FontWeight.SemiBold,
                     )
                     Spacer(Modifier.width(8.dp))
-                    StatusPill(healthy = stat?.healthy ?: true)
+                    StatusPill(healthy = stat?.healthy)
                 }
                 Spacer(Modifier.height(8.dp))
                 RecessedWell(modifier = Modifier.fillMaxWidth()) {
                     if (limit != null && limit > 0) {
                         val usage = (stat?.tokensIn ?: 0L) + (stat?.tokensOut ?: 0L)
-                        val cardPct = (usage * 100 / limit).toInt()
+                        val cardPct = (usage * 100 / limit).toInt().coerceIn(0, 100)
                         Text(
                             text = "$cardPct%",
                             color = colors.onSurface,
@@ -192,32 +193,26 @@ fun ProvidersScreen(
                         )
                         Spacer(Modifier.height(4.dp))
                         LinearProgressIndicator(
-                            progress = { cardPct / 100f },
+                            progress = { (cardPct / 100f).coerceIn(0f, 1f) },
                             modifier = Modifier.fillMaxWidth(),
                         )
                         Spacer(Modifier.height(6.dp))
-                        Text(
-                            text = "permintaan: ${stat?.requests ?: 0}",
-                            color = colors.onSurface.copy(alpha = 0.7f),
-                            fontSize = 11.sp,
-                        )
-                        Text(
-                            text = "masuk: ${stat?.tokensIn ?: 0} · keluar: ${stat?.tokensOut ?: 0}",
-                            color = colors.onSurface.copy(alpha = 0.7f),
-                            fontSize = 11.sp,
-                        )
-                        Text(
-                            text = "latensi: ${stat?.lastLatencyMs ?: 0} ms",
-                            color = colors.onSurface.copy(alpha = 0.7f),
-                            fontSize = 11.sp,
-                        )
-                    } else {
-                        Text(
-                            text = NO_VALUE,
-                            color = colors.onSurface.copy(alpha = 0.6f),
-                            fontSize = 14.sp,
-                        )
                     }
+                    Text(
+                        text = "permintaan: ${stat?.requests ?: 0}",
+                        color = colors.onSurface.copy(alpha = 0.7f),
+                        fontSize = 11.sp,
+                    )
+                    Text(
+                        text = "masuk: ${stat?.tokensIn ?: 0} · keluar: ${stat?.tokensOut ?: 0}",
+                        color = colors.onSurface.copy(alpha = 0.7f),
+                        fontSize = 11.sp,
+                    )
+                    Text(
+                        text = "latensi: ${stat?.lastLatencyMs ?: 0} ms",
+                        color = colors.onSurface.copy(alpha = 0.7f),
+                        fontSize = 11.sp,
+                    )
                 }
                 Spacer(Modifier.height(8.dp))
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -247,7 +242,7 @@ fun ProvidersScreen(
             Spacer(Modifier.height(8.dp))
             val combo = state.core.defaultCombo?.let { name ->
                 state.core.combos.firstOrNull { it.name == name }
-            } ?: state.core.combos.firstOrNull()
+            }
             combo?.steps?.forEachIndexed { index, step ->
                 Text(
                     text = "${index + 1}. ${step.provider} • ${step.model}",
@@ -293,17 +288,28 @@ private fun SummaryPill(label: String, value: String, modifier: Modifier = Modif
 }
 
 @Composable
-private fun StatusPill(healthy: Boolean) {
+private fun StatusPill(healthy: Boolean?) {
     val colors = ClayTheme.colors
+    val bg = when (healthy) {
+        true -> colors.primary
+        false -> colors.onSurface.copy(alpha = 0.25f)
+        null -> colors.onSurface.copy(alpha = 0.12f)
+    }
+    val txt = when (healthy) {
+        true -> "Sehat"
+        false -> "Tidak sehat"
+        null -> NO_VALUE
+    }
+    val tc = if (healthy == true) Color(0xFF06222B) else colors.onSurface
     Box(
         modifier = Modifier
             .clip(RoundedCornerShape(50))
-            .background(if (healthy) colors.primary else colors.onSurface.copy(alpha = 0.25f))
+            .background(bg)
             .padding(horizontal = 10.dp, vertical = 4.dp),
     ) {
         Text(
-            text = if (healthy) "Sehat" else "Tidak sehat",
-            color = if (healthy) Color(0xFF06222B) else colors.onSurface,
+            text = txt,
+            color = tc,
             fontSize = 11.sp,
             fontWeight = FontWeight.SemiBold,
         )

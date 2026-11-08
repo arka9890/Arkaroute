@@ -40,7 +40,8 @@ fun ProviderEditorDialog(
     var models by remember { mutableStateOf("") }
 
     val existingIds = state.core.providers.map { it.id }
-    val valid = id.isNotBlank() && baseUrl.isNotBlank() && id !in existingIds
+    val trimmedId = id.trim()
+    val valid = trimmedId.isNotBlank() && baseUrl.isNotBlank() && trimmedId !in existingIds
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -110,7 +111,7 @@ fun ProviderEditorDialog(
                 onClick = {
                     if (!valid) return@TextButton
                     val newProvider = ProviderConfigJson(
-                        id = id,
+                        id = trimmedId,
                         kind = kind,
                         baseUrl = baseUrl,
                         apiKey = apiKey,
