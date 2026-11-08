@@ -1,10 +1,259 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="id">
   <head>
     <meta charset="utf-8" />
-    <title>OmniRoute</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>OmniRoute — Dasbor</title>
+    <style>
+      :root {
+        --bg: #0B1326;
+        --card: #131d38;
+        --card-hi: #1a2547;
+        --ink: #e8eefc;
+        --ink-dim: #8ea3c4;
+        --accent: #22d3ee;
+        --ok: #34d399;
+        --bad: #f87171;
+        --radius: 24px;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--ink);
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+        padding: 20px 16px 40px;
+      }
+      .wrap { max-width: 960px; margin: 0 auto; }
+      .card {
+        background: var(--card);
+        border-radius: var(--radius);
+        box-shadow:
+          inset 2px 2px 6px rgba(255,255,255,0.06),
+          inset -3px -3px 8px rgba(0,0,0,0.55),
+          0 10px 24px rgba(0,0,0,0.45);
+        padding: 20px;
+        margin-bottom: 18px;
+      }
+      header.card {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 12px 18px;
+      }
+      header.card h1 { font-size: 1.35rem; margin: 0; letter-spacing: 0.5px; }
+      .pill {
+        display: inline-block;
+        padding: 4px 14px;
+        border-radius: 999px;
+        background: var(--card-hi);
+        color: var(--accent);
+        box-shadow: inset 1px 1px 3px rgba(255,255,255,0.08), inset -2px -2px 4px rgba(0,0,0,0.5);
+        font-size: 0.8rem;
+      }
+      .status-dot {
+        width: 12px; height: 12px; border-radius: 50%;
+        background: var(--ok);
+        box-shadow: 0 0 10px var(--ok);
+        display: inline-block;
+      }
+      .status-dot.down { background: var(--bad); box-shadow: 0 0 10px var(--bad); }
+      .head-meta { color: var(--ink-dim); font-size: 0.85rem; }
+      h2 { font-size: 0.85rem; text-transform: uppercase; letter-spacing: 2px; color: var(--ink-dim); margin: 0 0 14px; }
+      .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 16px; }
+      .tile .label { color: var(--ink-dim); font-size: 0.78rem; text-transform: uppercase; letter-spacing: 1.5px; }
+      .tile .value { font-size: 1.9rem; font-weight: 700; color: var(--accent); margin: 6px 0 4px; }
+      .tile .footer { color: var(--ink-dim); font-size: 0.8rem; }
+      .providers { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 16px; }
+      .provider .name { font-weight: 700; font-size: 1rem; margin-bottom: 8px; }
+      .badge { display: inline-block; padding: 2px 12px; border-radius: 999px; font-size: 0.75rem; }
+      .badge.sehat { color: var(--ok); }
+      .badge.gagal { color: var(--bad); }
+      .provider .meta { color: var(--ink-dim); font-size: 0.82rem; margin-top: 6px; }
+      .combo-list { list-style: none; margin: 0; padding: 0; }
+      .combo-list li {
+        padding: 12px 16px;
+        margin-bottom: 10px;
+        border-radius: 16px;
+        background: var(--card-hi);
+        box-shadow: inset 1px 1px 4px rgba(255,255,255,0.06), inset -2px -2px 5px rgba(0,0,0,0.5);
+      }
+      .muted { color: var(--ink-dim); font-size: 0.85rem; }
+    </style>
   </head>
   <body>
-    <h1>OmniRoute</h1>
+    <div class="wrap">
+      <header class="card">
+        <span class="status-dot" id="status-dot"></span>
+        <h1>Layanan Aktif</h1>
+        <span class="pill" id="version">—</span>
+        <span class="head-meta">Uptime <span id="uptime">—</span> detik</span>
+        <span class="head-meta">Status: <span id="status">—</span></span>
+      </header>
+
+      <section class="card" aria-label="Metrik">
+        <h2>Metrik</h2>
+        <div class="tiles">
+          <div class="tile card" style="margin-bottom:0">
+            <div class="label">Permintaan</div>
+            <div class="value" id="m-requests">—</div>
+            <div class="footer" id="m-requests-footer">—</div>
+          </div>
+          <div class="tile card" style="margin-bottom:0">
+            <div class="label">Total Token</div>
+            <div class="value" id="m-tokens">—</div>
+            <div class="footer" id="m-tokens-footer">—</div>
+          </div>
+          <div class="tile card" style="margin-bottom:0">
+            <div class="label">Latensi Tertinggi (ms)</div>
+            <div class="value" id="m-latency">—</div>
+            <div class="footer" id="m-latency-footer">—</div>
+          </div>
+          <div class="tile card" style="margin-bottom:0">
+            <div class="label">Kesehatan</div>
+            <div class="value" id="m-health">—</div>
+            <div class="footer" id="m-health-footer">—</div>
+          </div>
+        </div>
+      </section>
+
+      <section class="card" aria-label="Penyedia">
+        <h2>Penyedia</h2>
+        <div class="providers" id="providers"></div>
+        <p class="muted" id="providers-empty">Belum ada penyedia terkonfigurasi.</p>
+      </section>
+
+      <section class="card" aria-label="Kombinasi">
+        <h2>Kombinasi</h2>
+        <ul class="combo-list" id="combos"></ul>
+        <p class="muted" id="combos-empty">Belum ada kombinasi.</p>
+      </section>
+    </div>
+
+    <script>
+      var lastTotal = null;
+      var lastTs = null;
+
+      function num(v) {
+        return (typeof v === 'number' && isFinite(v)) ? v : null;
+      }
+
+      function fmtCompact(n) {
+        if (n >= 1000000) { return (n / 1000000).toFixed(1).replace(/\.0$/, '') + 'jt'; }
+        if (n >= 1000) { return (n / 1000).toFixed(1).replace(/\.0$/, '') + 'rb'; }
+        return String(n);
+      }
+
+      function renderHealth(data) {
+        var version = data.version || '—';
+        document.getElementById('version').textContent = version;
+        document.getElementById('status').textContent = data.status || '—';
+        var uptime = num(data.uptime_seconds);
+        document.getElementById('uptime').textContent = uptime === null ? '—' : String(uptime);
+        var dot = document.getElementById('status-dot');
+        dot.className = 'status-dot' + (data.status === 'ok' ? '' : ' down');
+
+        var total = num(data.requests_total) || 0;
+        var now = Date.now();
+        var perMin = '—';
+        if (lastTotal !== null && lastTs !== null) {
+          var dt = (now - lastTs) / 1000;
+          if (dt > 0) {
+            perMin = String(Math.round((total - lastTotal) / dt * 60));
+          }
+        }
+        document.getElementById('m-requests').textContent = perMin;
+        document.getElementById('m-requests-footer').textContent = '+' + total + ' total';
+        lastTotal = total;
+        lastTs = now;
+
+        var tin = num(data.tokens_in) || 0;
+        var tout = num(data.tokens_out) || 0;
+        document.getElementById('m-tokens').textContent = fmtCompact(tin + tout);
+        document.getElementById('m-tokens-footer').textContent = tin + ' masuk · ' + tout + ' keluar';
+
+        var providers = Array.isArray(data.providers) ? data.providers : [];
+        var slowest = null;
+        var slowestId = '';
+        for (var i = 0; i < providers.length; i++) {
+          var lat = num(providers[i].last_latency_ms);
+          if (lat !== null && lat > 0 && (slowest === null || lat > slowest)) {
+            slowest = lat;
+            slowestId = providers[i].id || '';
+          }
+        }
+        document.getElementById('m-latency').textContent = slowest === null ? '—' : String(slowest);
+        document.getElementById('m-latency-footer').textContent = slowest === null ? '—' : slowestId;
+
+        var healthyCount = 0;
+        for (var j = 0; j < providers.length; j++) {
+          if (providers[j].healthy === true) { healthyCount++; }
+        }
+        document.getElementById('m-health').textContent =
+          providers.length > 0 ? String(healthyCount * 100 / providers.length) + '%' : '—';
+        var failed = num(data.requests_failed) || 0;
+        document.getElementById('m-health-footer').textContent = failed + ' permintaan gagal';
+
+        var grid = document.getElementById('providers');
+        grid.textContent = '';
+        document.getElementById('providers-empty').style.display = providers.length > 0 ? 'none' : '';
+        for (var k = 0; k < providers.length; k++) {
+          var p = providers[k];
+          var card = document.createElement('div');
+          card.className = 'card provider';
+          card.style.marginBottom = '0';
+
+          var name = document.createElement('div');
+          name.className = 'name';
+          name.textContent = p.id || '—';
+          card.appendChild(name);
+
+          var badge = document.createElement('span');
+          badge.className = 'badge ' + (p.healthy === true ? 'sehat' : 'gagal');
+          badge.textContent = p.healthy === true ? 'Sehat' : 'Gagal';
+          card.appendChild(badge);
+
+          var meta = document.createElement('div');
+          meta.className = 'meta';
+          var plat = num(p.last_latency_ms);
+          var preq = num(p.requests);
+          meta.textContent =
+            'Latensi ' + (plat === null ? '—' : plat + ' ms') +
+            ' · Permintaan ' + (preq === null ? '—' : preq);
+          card.appendChild(meta);
+
+          if (p.last_error) {
+            var err = document.createElement('div');
+            err.className = 'meta';
+            err.textContent = 'Gagal — ' + p.last_error;
+            card.appendChild(err);
+          }
+
+          grid.appendChild(card);
+        }
+
+        var combos = Array.isArray(data.combos) ? data.combos : [];
+        var list = document.getElementById('combos');
+        list.textContent = '';
+        document.getElementById('combos-empty').style.display = combos.length > 0 ? 'none' : '';
+        for (var c = 0; c < combos.length; c++) {
+          var li = document.createElement('li');
+          li.textContent = String(combos[c]);
+          list.appendChild(li);
+        }
+      }
+
+      function refresh() {
+        fetch('/health')
+          .then(function (resp) { return resp.json(); })
+          .then(renderHealth)
+          .catch(function () {
+            document.getElementById('status').textContent = '—';
+          });
+      }
+
+      refresh();
+      setInterval(refresh, 2000);
+    </script>
   </body>
 </html>
