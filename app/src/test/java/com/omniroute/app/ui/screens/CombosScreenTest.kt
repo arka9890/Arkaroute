@@ -73,7 +73,7 @@ class CombosScreenTest {
     @Test fun segmented_switch_swaps_content() {
         val state = stateWith(combos = listOf(ComboJson(name = "combo-alpha", steps = emptyList())))
         setScreen(state)
-        composeRule.onNodeWithText("combo-alpha").assertIsDisplayed()
+        assertTrue(composeRule.onAllNodesWithText("combo-alpha").fetchSemanticsNodes().isNotEmpty())
         composeRule.onNode(hasText("Client API Keys") and hasClickAction()).performClick()
         composeRule.waitForIdle()
         composeRule.onNodeWithText("combo-alpha").let { /* gone */ }

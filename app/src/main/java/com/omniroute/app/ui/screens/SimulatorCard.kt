@@ -49,7 +49,7 @@ fun SimulatorCard(
     var status by remember { mutableStateOf("") }
     var result by remember { mutableStateOf("") }
     var loading by remember { mutableStateOf(false) }
-    val scope = rememberCoroutineScope { Dispatchers.IO }
+    val scope = rememberCoroutineScope()
 
     ClayCard(modifier = modifier.fillMaxWidth()) {
         Text(
