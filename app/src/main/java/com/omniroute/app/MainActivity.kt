@@ -6,6 +6,7 @@ import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.widget.Toast
@@ -37,6 +38,7 @@ import com.omniroute.app.data.HttpHealthSource
 import com.omniroute.app.data.JniGatewayBridge
 import com.omniroute.app.service.GatewayService
 import com.omniroute.app.ui.screens.ServiceScreen
+import com.omniroute.app.ui.screens.WebViewScreen
 import com.omniroute.app.ui.shell.AppShell
 import com.omniroute.app.ui.shell.Tab
 import com.omniroute.app.ui.theme.ClayTheme
@@ -89,7 +91,22 @@ class MainActivity : ComponentActivity() {
                                 Toast.makeText(context, R.string.logs_copied_toast, Toast.LENGTH_SHORT).show()
                             },
                         )
-                        Tab.WEBVIEW, Tab.PROVIDERS, Tab.COMBOS, Tab.ROUTES ->
+                        Tab.WEBVIEW -> WebViewScreen(
+                            url = state.app.webviewUrl,
+                            online = state.health != null,
+                            // AppMeta only (webviewUrl) — no server restart; also force
+                            // an immediate health fetch so the offline retry clears.
+                            onRefreshUrl = { newUrl ->
+                                repository.saveAppMeta(state.app.copy(webviewUrl = newUrl))
+                                pollScope.launch { repository.pollOnce() }
+                            },
+                            onOpenExternally = {
+                                context.startActivity(
+                                    Intent(Intent.ACTION_VIEW, Uri.parse(state.app.webviewUrl))
+                                )
+                            },
+                        )
+                        Tab.PROVIDERS, Tab.COMBOS, Tab.ROUTES ->
                             // Placeholder — each tab gets its own screen in a later task.
                             Box(Modifier.fillMaxSize())
                     }

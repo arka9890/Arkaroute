@@ -46,4 +46,16 @@
     <string name="restart_action">Mulai Ulang</string>
     <string name="clear_cache_action">Hapus Cache</string>
     <string name="cache_cleared_toast">Cache berhasil dibersihkan</string>
+
+    <string name="status_online">ONLINE</string>
+    <string name="status_offline">OFFLINE</string>
+    <string name="webview_lock_desc">Koneksi aman</string>
+    <string name="webview_refresh_desc">Muat ulang</string>
+    <string name="webview_copy_desc">Salin URL</string>
+    <string name="webview_open_desc">Buka di browser</string>
+    <string name="webview_copied_toast">URL disalin</string>
+    <string name="webview_offline_hint">Gateway offline — dashboard tidak dapat dimuat. Periksa daemon lalu coba lagi.</string>
+    <string name="webview_retry">Coba lagi</string>
+    <string name="cf_tunnel_label">CF TUNNEL</string>
+    <string name="cf_tunnel_soon">segera</string>
 </resources>
