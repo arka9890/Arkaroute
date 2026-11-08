@@ -90,7 +90,7 @@ class ProvidersScreenTest {
             providerLimits = mapOf("p1" to 1_000_000L),
         )
         setScreen(state)
-        composeRule.onAllNodesWithText("25%").assertCount(2)
+        assertEquals(2, composeRule.onAllNodesWithText("25%").fetchSemanticsNodes().size)
     }
 
     @Test fun kind_filter_chips_narrow_list() {
