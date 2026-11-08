@@ -14,7 +14,7 @@ use serde_json::json;
 use tokio::time::{timeout, Duration};
 
 use crate::auth::{authorize, AuthError};
-use crate::config::GatewayConfig;
+use crate::config::{GatewayConfig, ProviderKind};
 use crate::protocol::ChatCompletionRequest;
 use crate::providers;
 use crate::routing::{execute, RouteError};
@@ -28,6 +28,8 @@ pub fn build_router(state: AppState) -> Router {
         .route("/v1/chat/completions", post(chat_completions_handler))
         .route("/v1/messages", post(messages_handler))
         .route("/v1/models", get(models_handler))
+        .route("/v1/providers/{id}/ping", post(provider_ping_handler))
+        .route("/providers/{id}/ping", post(provider_ping_handler))
         .route("/dashboard", get(dashboard_index_handler))
         .route("/dashboard/", get(dashboard_root_handler))
         .route("/dashboard/{*path}", get(dashboard_asset_handler))
@@ -483,6 +485,52 @@ fn make_stream(
         }
     }
 }
+
+
+/// `POST /v1/providers/{id}/ping` -> probe upstream reachability.
+async fn provider_ping_handler(
+    peer: PeerAddr,
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+) -> Response {
+    let cfg = read_cfg(&state);
+    if let Err(e) = authorize(&cfg, &headers, peer.0.map(|a| a.ip().is_loopback()).unwrap_or(false)) {
+        return auth_error_body(e).into_response();
+    }
+    let provider = match cfg.provider(&id) {
+        Some(p) => p.clone(),
+        None => return (StatusCode::NOT_FOUND, Json(json!({"error": "provider not found"}))).into_response(),
+    };
+
+    let timeout_ms = cfg.request_timeout_ms.min(5000);
+    let url = format!("{}/models", provider.base_url.trim_end_matches('/'));
+    let start = std::time::Instant::now();
+    let mut req = state.client.get(&url);
+    match provider.kind {
+        ProviderKind::OpenAiCompatible => {
+            req = req.bearer_auth(provider.api_key.as_str());
+        }
+        ProviderKind::Anthropic => {
+            req = req.header("x-api-key", provider.api_key.as_str());
+        }
+    }
+    let result = timeout(Duration::from_millis(timeout_ms), req.send()).await;
+    let latency = start.elapsed().as_millis() as u64;
+    match result {
+        Ok(Ok(resp)) => {
+            let status = resp.status().as_u16();
+            (StatusCode::OK, Json(json!({"ok": true, "latency_ms": latency, "status": status}))).into_response()
+        }
+        Ok(Err(e)) => {
+            (StatusCode::BAD_GATEWAY, Json(json!({"ok": false, "error": e.to_string()}))).into_response()
+        }
+        Err(_) => {
+            (StatusCode::BAD_GATEWAY, Json(json!({"ok": false, "error": "request timed out"}))).into_response()
+        }
+    }
+}
+
 
 fn read_cfg(state: &AppState) -> GatewayConfig {
     state
