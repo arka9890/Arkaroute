@@ -14,6 +14,7 @@ import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTextInput
+import androidx.compose.ui.test.performScrollTo
 import com.omniroute.app.R
 import com.omniroute.app.config.AppMeta
 import com.omniroute.app.config.ClientKey
@@ -143,6 +144,10 @@ class CombosScreenTest {
         }
         val state = stateWith(combos = listOf(ComboJson(name = "c1", steps = emptyList())))
         setScreen(state, transport = transport)
+        // SimulatorCard sits below the fold — scroll it into view so the
+        // injected touch actually lands on the button (performTextInput works
+        // off-screen, performClick does not).
+        composeRule.onNodeWithText("Kirim Uji").performScrollTo()
         composeRule.onNodeWithText("Prompt").performTextInput("hi")
         composeRule.onNodeWithText("Kirim Uji").performClick()
         composeRule.waitForIdle()
@@ -155,6 +160,7 @@ class CombosScreenTest {
         }
         val state = stateWith(combos = listOf(ComboJson(name = "c1", steps = emptyList())))
         setScreen(state, transport = transport)
+        composeRule.onNodeWithText("Kirim Uji").performScrollTo()
         composeRule.onNodeWithText("Prompt").performTextInput("hi")
         composeRule.onNodeWithText("Kirim Uji").performClick()
         composeRule.waitForIdle()
