@@ -40,6 +40,7 @@ import com.omniroute.app.service.GatewayService
 import com.omniroute.app.ui.screens.ServiceScreen
 import com.omniroute.app.ui.screens.ProvidersScreen
 import com.omniroute.app.ui.screens.CombosScreen
+import com.omniroute.app.ui.screens.RoutesScreen
 import com.omniroute.app.ui.screens.WebViewScreen
 import com.omniroute.app.ui.shell.AppShell
 import com.omniroute.app.ui.shell.Tab
@@ -129,7 +130,18 @@ class MainActivity : ComponentActivity() {
                                 },
                             )
                         Tab.ROUTES ->
-                            Box(Modifier.fillMaxSize())
+                            RoutesScreen(
+                                state = state,
+                                onSaveConfigAndRestart = { core, app ->
+                                    repository.saveConfigAndRestart(core, app)
+                                },
+                                onToast = { msg ->
+                                    Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
+                                },
+                                onOpenComboEditor = { comboName ->
+                                    Toast.makeText(context, comboName, Toast.LENGTH_SHORT).show()
+                                },
+                            )
                     }
                 }
             }
