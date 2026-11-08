@@ -116,10 +116,12 @@ fun SimulatorCard(
                 result = ""
                 scope.launch {
                     val payload = """{"model":"$selectedCombo","messages":[{"role":"user","content":"${prompt.replace("\"", "\\\"")}"}],"stream":false}"""
-                    val (code, body, err) = withContext(Dispatchers.IO) {
-                        if (transport != null) {
-                            transport("$baseUrl/v1/chat/completions", payload)
-                        } else {
+                    val (code, body, err) = if (transport != null) {
+                        // Injected (test) transport: call directly so it resolves
+                        // synchronously on the Main dispatcher — no IO-hop needed.
+                        transport("$baseUrl/v1/chat/completions", payload)
+                    } else {
+                        withContext(Dispatchers.IO) {
                             runCatching {
                                 val conn = URL("$baseUrl/v1/chat/completions").openConnection() as HttpURLConnection
                                 conn.requestMethod = "POST"
