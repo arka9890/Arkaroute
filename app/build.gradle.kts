@@ -1,3 +1,5 @@
+import java.util.Base64
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
@@ -33,6 +35,30 @@ android {
     testOptions {
         unitTests {
             isIncludeAndroidResources = true
+        }
+    }
+
+    signingConfigs {
+        create("release") {
+            val ksB64 = System.getenv("KEYSTORE_BASE64")
+            if (ksB64 != null && ksB64.isNotBlank()) {
+                val ksFile = project.layout.buildDirectory.file("release-keystore.jks").get().asFile
+                ksFile.parentFile.mkdirs()
+                ksFile.writeBytes(Base64.getDecoder().decode(ksB64))
+                storeFile = ksFile
+                storePassword = System.getenv("KEYSTORE_PASSWORD")
+                keyAlias = System.getenv("KEY_ALIAS")
+            }
+        }
+    }
+    buildTypes {
+        getByName("release") {
+            isMinifyEnabled = false
+            signingConfig = if (System.getenv("KEYSTORE_BASE64") != null) {
+                signingConfigs.getByName("release")
+            } else {
+                null
+            }
         }
     }
     tasks.withType<Test> {

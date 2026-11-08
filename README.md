@@ -90,3 +90,23 @@ curl -s http://127.0.0.1:20128/v1/messages \
 ## Spesifikasi
 
 Rancangan lengkap: `docs/superpowers/specs/2026-11-04-omniroute-android-design.md`.
+
+## Android (APK)
+
+Aplikasi Android OmniRoute menjalankan gateway (crate Rust `omniroute-core`, via JNI `libomniroute_bridge.so`) langsung di perangkat, menghadap endpoint `/v1/chat/completions`, `/v1/messages`, dan `/health` — tanpa server terpisah. Di Android, gateway berjalan sebagai foreground service (`GatewayService`) yang menampilkan notifikasi "gateway running" secara permanen; service dimulai ulang secara otomatis saat reboot (`BootReceiver`).
+
+**Mengunduh APK.** APK di-build oleh CI (`.github/workflows/apk.yml`) dan tersedia sebagai artifact Actions dari workflow **apk** pada branch `dev`:
+
+- `app-debug` — APK debug (cocok untuk pengembangan lokal).
+- `omniroute-release` — APK release (ditandatangani agar bisa di-update in-place; kunci stable disimpan sebagai repo secrets `KEYSTORE_BASE64`, `KEYSTORE_PASSWORD`, `KEY_ALIAS`).
+
+Unduh dari halaman Actions repository → pilih run `apk` terbaru pada branch `dev` → bagian **Artifacts** → `omniroute-release` (atau `app-debug`).
+
+**Pemasangan.** Perangkat **arm64-only** (`arm64-v8a`). Pasang APK dengan mengizinkan "install from unknown sources" pada browser/file manager, lalu buka aplikasi. Foreground notification menandakan gateway sedang berjalan; daemon tidak dikontrol dari panel sistem.
+
+**First-run.** Layanan otomatis dimulai saat aplikasi pertama dibuka. Konfigurasi disimpan terenkripsi di `config.enc` (di `filesDir` aplikasi, kunci di Android Keystore via `KeystoreCryptoEngine`/`CryptoEngine`). Jika `config.enc` hilang atau rusak, aplikasi memakai konfigurasi default (listen di loopback port 20128) dan memindahkan konfigurasi rusak ke `config.corrupt`. Untuk akses dari LAN, aktifkan LAN dan atur API key terlebih dahulu melalui UI aplikasi — gateway menolak konfigurasi dengan LAN aktif tetapi tanpa key.
+
+**Cara CI meng-build.** Workflow `apk` punya dua job:
+
+1. `build` — setiap push/PR: unit tests + `assembleDebug`; memverifikasi simbol JNI dan bahwa `.so` terkemas di APK.
+2. `release` — hanya saat push ke `dev`: `assembleRelease` dengan signing secrets; mengunggah artifact `omniroute-release`. Jika secrets signing belum tersedia, job ini menghasilkan APK release tanpa tanda tangan (unsigned) — tetap bisa dipasang, tetapi update in-place tidak tersedia sampai signing dikonfigurasi.
