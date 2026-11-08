@@ -125,6 +125,12 @@ class SettingsScreenTest {
         composeRule.onNodeWithContentDescription("Akses Jaringan Lokal (LAN)").performClick()
         composeRule.waitForIdle()
         assertEquals(true, captured.get()?.first?.lanEnabled)
+        assertEquals("0.0.0.0", captured.get()?.first?.bind)
+        // Toggling back off restores the loopback bind.
+        composeRule.onNodeWithContentDescription("Akses Jaringan Lokal (LAN)").performClick()
+        composeRule.waitForIdle()
+        assertEquals(false, captured.get()?.first?.lanEnabled)
+        assertEquals("127.0.0.1", captured.get()?.first?.bind)
     }
 
     @Test fun port_change_validates() {
@@ -208,6 +214,34 @@ class SettingsScreenTest {
         composeRule.onNodeWithText("Ekspor").performClick()
         composeRule.waitForIdle()
         assertEquals(1, launchCount.get())
+    }
+
+    @Test fun restore_rejects_non_loopback_webview_url() {
+        val state = stateWith()
+        val captured = AtomicReference<Pair<GatewayConfigJson, AppMeta>?>(null)
+        var toast: String? = null
+        val evil = """{"core":{"bind":"127.0.0.1","port":20128,"lan_enabled":false,"gateway_keys":[],"default_combo":null,"providers":[],"combos":[],"request_timeout_ms":600000,"stream_idle_timeout_ms":60000},"app":{"bootStart":true,"wakeLock":true,"webviewUrl":"https://evil.example.com/dashboard","clientKeys":[],"themeMode":"oled","clayDepth":85,"highContrast":false,"providerLimits":{}}}"""
+        setScreen(state, onSave = { c, a -> captured.set(c to a) }, onToast = { toast = it }, restoreContent = evil)
+        composeRule.onNodeWithText("Pulihkan dari Cadangan").performScrollTo()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithText("Pulihkan dari Cadangan").performClick()
+        composeRule.waitForIdle()
+        assertTrue(toast != null)
+        assertEquals(null, captured.get())
+    }
+
+    @Test fun restore_accepts_loopback_webview_url() {
+        val state = stateWith()
+        val captured = AtomicReference<Pair<GatewayConfigJson, AppMeta>?>(null)
+        var toast: String? = null
+        val good = """{"core":{"bind":"127.0.0.1","port":20128,"lan_enabled":false,"gateway_keys":[],"default_combo":null,"providers":[],"combos":[],"request_timeout_ms":600000,"stream_idle_timeout_ms":60000},"app":{"bootStart":true,"wakeLock":true,"webviewUrl":"http://127.0.0.1:20128/dashboard","clientKeys":[],"themeMode":"oled","clayDepth":85,"highContrast":false,"providerLimits":{}}}"""
+        setScreen(state, onSave = { c, a -> captured.set(c to a) }, onToast = { toast = it }, restoreContent = good)
+        composeRule.onNodeWithText("Pulihkan dari Cadangan").performScrollTo()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithText("Pulihkan dari Cadangan").performClick()
+        composeRule.waitForIdle()
+        assertTrue(captured.get() != null)
+        assertEquals("http://127.0.0.1:20128/dashboard", captured.get()!!.second.webviewUrl)
     }
 
     @Test fun restore_rejects_invalid_json() {

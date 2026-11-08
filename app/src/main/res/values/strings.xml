@@ -112,7 +112,7 @@
     <string name="settings_saved_toast">Pengaturan berhasil diperbarui</string>
     <string name="settings_restore_error">Gagal memulihkan: format tidak valid</string>
     <string name="settings_export_confirm_title">Ekspor Cadangan Konfigurasi</string>
-    <string name="settings_export_confirm_msg">Cadangan berisi rahasia. Lanjutkan?</string>
+    <string name="settings_export_confirm_msg">Cadangan berisi rahasia (kunci API provider dan key gateway/klien) dan akan ditulis dalam bentuk teks biasa tanpa enkripsi ke lokasi yang Anda pilih. Pastikan Anda menyimpan file dan membagikannya hanya di tempat yang aman. Lanjutkan?</string>
     <string name="settings_export_confirm_yes">Ekspor</string>
     <string name="settings_export_confirm_no">Batal</string>
     <string name="settings_restart_prompt">Restart diperlukan</string>

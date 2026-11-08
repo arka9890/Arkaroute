@@ -112,6 +112,10 @@ fun SettingsScreen(
         if (c.requestTimeoutMs < 60000) return false
         if (a.themeMode !in listOf("oled", "soft", "system")) return false
         if (a.clayDepth !in 10..100) return false
+        // webviewUrl drives a JS-enabled WebView: only loopback http/https
+        // may be restored; remote hosts and file:/javascript:/etc. are
+        // rejected so a backup cannot plant a remote URL as WebView target.
+        if (!isLoopbackWebviewUrl(a.webviewUrl)) return false
         return true
     }
 
@@ -345,11 +349,11 @@ fun SettingsScreen(
                             showKeyDialog = true
                         } else {
                             lanEnabled = true
-                            saveCore(core.copy(lanEnabled = true), app)
+                            saveCore(core.copy(lanEnabled = true, bind = "0.0.0.0"), app)
                         }
                     } else {
                         lanEnabled = false
-                        saveCore(core.copy(lanEnabled = false), app)
+                        saveCore(core.copy(lanEnabled = false, bind = "127.0.0.1"), app)
                     }
                 }, modifier = Modifier.semantics { contentDescription = "Akses Jaringan Lokal (LAN)" })
             }
@@ -445,7 +449,7 @@ fun SettingsScreen(
             confirmButton = {
                 TextButton(onClick = {
                     val newKey = key
-                    val newCore = core.copy(gatewayKeys = core.gatewayKeys + newKey, lanEnabled = true)
+                    val newCore = core.copy(gatewayKeys = core.gatewayKeys + newKey, lanEnabled = true, bind = "0.0.0.0")
                     val newApp = app.copy(clientKeys = app.clientKeys + ClientKey(label = "Gateway", secret = newKey))
                     lanEnabled = true
                     core = newCore
@@ -504,4 +508,21 @@ private fun formatUptimeSettings(seconds: Long): String {
     val hours = seconds / 3600
     val minutes = (seconds % 3600) / 60
     return "${hours}j ${minutes}m"
+}
+
+/**
+ * True only for `http://` / `https://` URLs on a loopback host
+ * (`127.0.0.1` or `localhost`). Everything else — remote hosts,
+ * `file:`, `javascript:`, relative/empty targets — is rejected.
+ */
+private fun isLoopbackWebviewUrl(url: String): Boolean {
+    val parsed = try {
+        Uri.parse(url)
+    } catch (e: Exception) {
+        return false
+    }
+    val scheme = parsed.scheme?.lowercase()
+    if (scheme != "http" && scheme != "https") return false
+    val host = parsed.host?.lowercase()
+    return host == "127.0.0.1" || host == "localhost"
 }
