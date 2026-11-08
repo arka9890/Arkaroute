@@ -63,4 +63,6 @@
     <string name="providers_connected_format">%1$d Terhubung</string>
     <string name="providers_segera">segera</string>
     <string name="providers_fallback_title">Pohon Fallback Otomatis</string>
+    <string name="routes_synced">TERSINKRON</string>
+    <string name="routes_cta">Susun rantai fallback provider &amp; model</string>
 </resources>
