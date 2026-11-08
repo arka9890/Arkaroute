@@ -40,6 +40,7 @@ fun SimulatorCard(
     modifier: Modifier = Modifier,
     baseUrl: String = "",
     onToast: (String) -> Unit = {},
+    transport: (suspend (String, String) -> Triple<Int, String, String?>)? = null,
 ) {
     val colors = ClayTheme.colors
     var selectedCombo by remember { mutableStateOf(combos.firstOrNull() ?: "") }
@@ -114,21 +115,25 @@ fun SimulatorCard(
                 status = "Memvalidasi Rantai..."
                 result = ""
                 scope.launch {
+                    val payload = """{"model":"$selectedCombo","messages":[{"role":"user","content":"${prompt.replace("\"", "\\\"")}"}],"stream":false}"""
                     val (code, body, err) = withContext(Dispatchers.IO) {
-                        runCatching {
-                            val conn = URL("$baseUrl/v1/chat/completions").openConnection() as HttpURLConnection
-                            conn.requestMethod = "POST"
-                            conn.connectTimeout = 30000
-                            conn.readTimeout = 30000
-                            conn.doOutput = true
-                            conn.setRequestProperty("Content-Type", "application/json")
-                            val payload = """{"model":"$selectedCombo","messages":[{"role":"user","content":"${prompt.replace("\"", "\\\"")}"}],"stream":false}"""
-                            conn.outputStream.use { it.write(payload.toByteArray()) }
-                            val rc = conn.responseCode
-                            val stream = if (rc in 200..299) conn.inputStream else conn.errorStream
-                            val text = stream?.bufferedReader()?.use { it.readText() } ?: ""
-                            Triple(rc, text, null as String?)
-                        }.getOrElse { e -> Triple(0, "", e.message) }
+                        if (transport != null) {
+                            transport("$baseUrl/v1/chat/completions", payload)
+                        } else {
+                            runCatching {
+                                val conn = URL("$baseUrl/v1/chat/completions").openConnection() as HttpURLConnection
+                                conn.requestMethod = "POST"
+                                conn.connectTimeout = 30000
+                                conn.readTimeout = 30000
+                                conn.doOutput = true
+                                conn.setRequestProperty("Content-Type", "application/json")
+                                conn.outputStream.use { it.write(payload.toByteArray()) }
+                                val rc = conn.responseCode
+                                val stream = if (rc in 200..299) conn.inputStream else conn.errorStream
+                                val text = stream?.bufferedReader()?.use { it.readText() } ?: ""
+                                Triple(rc, text, null as String?)
+                            }.getOrElse { e -> Triple(0, "", e.message) }
+                        }
                     }
                     loading = false
                     if (err != null) {

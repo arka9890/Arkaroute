@@ -61,10 +61,11 @@ class CombosScreenTest {
         state: GatewayUiState,
         baseUrl: String = "",
         onSave: (GatewayConfigJson, AppMeta) -> Unit = { _, _ -> },
+        transport: (suspend (String, String) -> Triple<Int, String, String?>)? = null,
     ) {
         composeRule.setContent {
             ClayTheme(colors = clayColorsFor("oled"), depth = 85) {
-                CombosScreen(state = state, baseUrl = baseUrl, onSaveConfigAndRestart = onSave)
+                CombosScreen(state = state, baseUrl = baseUrl, onSaveConfigAndRestart = onSave, simulatorTransport = transport)
             }
         }
     }
@@ -137,9 +138,11 @@ class CombosScreenTest {
     }
 
     @Test fun simulator_reports_real_result() {
-        val port = startServer(200, """{"choices":[{"index":0,"message":{"role":"assistant","content":"Halo"}}]}""")
+        val transport: suspend (String, String) -> Triple<Int, String, String?> = { _, _ ->
+            Triple(200, """{"choices":[{"index":0,"message":{"role":"assistant","content":"Halo"}}]}""", null)
+        }
         val state = stateWith(combos = listOf(ComboJson(name = "c1", steps = emptyList())))
-        setScreen(state, baseUrl = "http://127.0.0.1:$port")
+        setScreen(state, transport = transport)
         composeRule.onNodeWithText("Prompt").performTextInput("hi")
         composeRule.onNodeWithText("Kirim Uji").performClick()
         composeRule.waitForIdle()
@@ -150,9 +153,11 @@ class CombosScreenTest {
     }
 
     @Test fun simulator_surfaces_gateway_error() {
-        val port = startServer(400, """{"error":{"message":"model not found"}}""")
+        val transport: suspend (String, String) -> Triple<Int, String, String?> = { _, _ ->
+            Triple(400, """{"error":{"message":"model not found"}}""", null)
+        }
         val state = stateWith(combos = listOf(ComboJson(name = "c1", steps = emptyList())))
-        setScreen(state, baseUrl = "http://127.0.0.1:$port")
+        setScreen(state, transport = transport)
         composeRule.onNodeWithText("Prompt").performTextInput("hi")
         composeRule.onNodeWithText("Kirim Uji").performClick()
         composeRule.waitForIdle()

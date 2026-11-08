@@ -51,6 +51,7 @@ fun CombosScreen(
     baseUrl: String = "",
     onSaveConfigAndRestart: (GatewayConfigJson, AppMeta) -> Unit = { _, _ -> },
     onToast: (String) -> Unit = {},
+    simulatorTransport: (suspend (String, String) -> Triple<Int, String, String?>)? = null,
 ) {
     val colors = ClayTheme.colors
     var segment by remember { mutableStateOf("combos") } // combos | keys
@@ -135,6 +136,7 @@ fun CombosScreen(
                 combos = state.core.combos.map { it.name },
                 baseUrl = resolvedBaseUrl,
                 onToast = onToast,
+                transport = simulatorTransport,
             )
 
             Spacer(Modifier.height(4.dp))
