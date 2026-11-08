@@ -164,6 +164,6 @@ class CombosScreenTest {
         composeRule.onNodeWithText("Prompt").performTextInput("hi")
         composeRule.onNodeWithText("Kirim Uji").performClick()
         composeRule.waitForIdle()
-        assertTrue(composeRule.onAllNodesWithText("Gagal").fetchSemanticsNodes().isNotEmpty())
+        assertTrue(composeRule.onAllNodesWithText("Gagal: model not found").fetchSemanticsNodes().isNotEmpty())
     }
 }
