@@ -243,7 +243,7 @@ private fun BottomBar(selectedTab: Tab, onSelect: (Tab) -> Unit) {
     }
 }
 
-/** Placeholder body behind the avatar; Task 8 fills the real Settings screen. */
+/** Placeholder body behind the avatar; Task 8 fills the real Settings screen. Routes screen wired in MainActivity. */
 @Composable
 fun SettingsPlaceholder(modifier: Modifier = Modifier) {
     val colors = ClayTheme.colors
