@@ -70,7 +70,7 @@ class MainActivity : ComponentActivity() {
             DisposableEffect(pollScope) { onDispose { pollScope.cancel() } }
             LaunchedEffect(repository) { repository.startPolling(pollScope) }
             val state by repository.state.collectAsState()
-            ClayTheme(colors = clayColorsFor(app.themeMode, app.highContrast), depth = app.clayDepth) {
+            ClayTheme(colors = clayColorsFor(state.app.themeMode, state.app.highContrast), depth = state.app.clayDepth) {
                 PermissionsRequest()
                 AppShell(
                     port = core.port,

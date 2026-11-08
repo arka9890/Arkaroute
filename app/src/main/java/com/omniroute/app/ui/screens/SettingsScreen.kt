@@ -50,31 +50,19 @@ import com.omniroute.app.ui.components.RecessedWell
 import com.omniroute.app.ui.theme.ClayTheme
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
+import java.security.SecureRandom
 import java.util.Locale
 
 @Composable
 fun SettingsScreen(
     state: GatewayUiState,
     modifier: Modifier = Modifier,
-    baseUrl: String = "",
     onSaveConfigAndRestart: (GatewayConfigJson, AppMeta) -> Unit = { _, _ -> },
     onSaveAppMeta: (AppMeta) -> Unit = {},
     onToast: (String) -> Unit = {},
-    // SAF seams (tests pass fakes)
-    restorePicker: (() -> String?)? = null,
-    restoreContentProvider: (() -> String?)? = null,
-    openDocument: (() -> String?)? = null,
-    onRestoreBackup: (() -> String?)? = null,
-    restoreLauncher: (() -> String?)? = null,
-    restoreFileContent: String? = null,
-    openDocumentResult: String? = null,
-    pickedContent: String? = null,
-    backupContent: String? = null,
-    restoreText: String? = null,
-    fileContent: String? = null,
-    picker: (() -> String?)? = null,
-    documentPicker: (() -> String?)? = null,
-    onPickDocument: (() -> String?)? = null,
+    // SAF seams (tests pass fakes; production defaults null -> real SAF)
+    restoreContent: String? = null,
+    onExportLaunch: (() -> Unit)? = null,
 ) {
     val colors = ClayTheme.colors
     val context = LocalContext.current
@@ -100,14 +88,15 @@ fun SettingsScreen(
     var cacheSize by remember { mutableStateOf(AppCache.size(context)) }
     var showExportConfirm by remember { mutableStateOf(false) }
     var showKeyDialog by remember { mutableStateOf(false) }
-    var generatedKey by remember { mutableStateOf("") }
 
     val segera = stringResource(R.string.settings_segera)
 
     fun saveAppMeta(newApp: AppMeta) {
+        // AppMeta-only persist (no daemon restart): repository.saveAppMeta.
+        // saveConfigAndRestart also persists AppMeta but would restart the
+        // daemon (STOP, 300ms, START) — redundant for theme/boot/wake changes.
         app = newApp
         onSaveAppMeta(newApp)
-        onSaveConfigAndRestart(core, newApp)
         onToast(context.getString(R.string.settings_saved_toast))
     }
 
@@ -118,11 +107,24 @@ fun SettingsScreen(
         onToast(context.getString(R.string.settings_saved_toast))
     }
 
+    fun validateBackup(c: GatewayConfigJson, a: AppMeta): Boolean {
+        if (c.port !in 1..65535) return false
+        if (c.requestTimeoutMs < 60000) return false
+        if (a.themeMode !in listOf("oled", "soft", "system")) return false
+        if (a.clayDepth !in 10..100) return false
+        return true
+    }
+
     fun processRestore(content: String?) {
         if (content == null) return
         try {
             val wrapper = ConfigJson.decodeFromString<ConfigWrapper>(content)
+            if (!validateBackup(wrapper.core, wrapper.app)) {
+                onToast(context.getString(R.string.settings_restore_error))
+                return
+            }
             saveCore(wrapper.core, wrapper.app)
+            onToast(context.getString(R.string.settings_restart_prompt))
         } catch (e: Exception) {
             onToast(context.getString(R.string.settings_restore_error))
         }
@@ -145,23 +147,6 @@ fun SettingsScreen(
             context.contentResolver.openInputStream(uri)?.bufferedReader()?.use { it.readText() }
         } catch (e: Exception) { null }
         processRestore(content)
-    }
-
-    fun restoreContentFromSeam(): String? {
-        return restorePicker?.invoke()
-            ?: restoreContentProvider?.invoke()
-            ?: openDocument?.invoke()
-            ?: onRestoreBackup?.invoke()
-            ?: restoreLauncher?.invoke()
-            ?: picker?.invoke()
-            ?: documentPicker?.invoke()
-            ?: onPickDocument?.invoke()
-            ?: restoreFileContent
-            ?: openDocumentResult
-            ?: pickedContent
-            ?: backupContent
-            ?: restoreText
-            ?: fileContent
     }
 
     Column(
@@ -245,7 +230,7 @@ fun SettingsScreen(
                         saveAppMeta(app)
                     },
                     valueRange = 10f..100f,
-                    modifier = Modifier.weight(1f),
+                    modifier = Modifier.weight(1f).semantics { contentDescription = "Kedalaman Efek Clay slider" },
                 )
                 Spacer(Modifier.width(8.dp))
                 Text(text = "$clayDepth%", color = colors.primary, fontWeight = FontWeight.Bold, fontSize = 14.sp, fontFamily = FontFamily.Monospace)
@@ -297,19 +282,22 @@ fun SettingsScreen(
                 OutlinedTextField(
                     value = portInput,
                     onValueChange = { portInput = it; portError = null },
-                    modifier = Modifier.weight(1f),
+                    modifier = Modifier.weight(1f).semantics { contentDescription = "Port input" },
                     singleLine = true,
                 )
                 Spacer(Modifier.width(8.dp))
-                ClayButton(onClick = {
-                    val p = portInput.toIntOrNull()
-                    if (p == null || p !in 1..65535) {
-                        portError = context.getString(R.string.settings_port_error)
-                    } else {
-                        portError = null
-                        saveCore(core.copy(port = p), app)
-                    }
-                }) {
+                ClayButton(
+                    onClick = {
+                        val p = portInput.toIntOrNull()
+                        if (p == null || p !in 1..65535) {
+                            portError = context.getString(R.string.settings_port_error)
+                        } else {
+                            portError = null
+                            saveCore(core.copy(port = p), app)
+                        }
+                    },
+                    modifier = Modifier.semantics { contentDescription = "Ubah port" },
+                ) {
                     Text(text = stringResource(R.string.settings_port_change))
                 }
             }
@@ -323,19 +311,22 @@ fun SettingsScreen(
                 OutlinedTextField(
                     value = timeoutInput,
                     onValueChange = { timeoutInput = it; timeoutError = null },
-                    modifier = Modifier.weight(1f),
+                    modifier = Modifier.weight(1f).semantics { contentDescription = "Timeout input" },
                     singleLine = true,
                 )
                 Spacer(Modifier.width(8.dp))
-                ClayButton(onClick = {
-                    val m = timeoutInput.toIntOrNull()
-                    if (m == null || m < 1) {
-                        timeoutError = context.getString(R.string.settings_timeout_error)
-                    } else {
-                        timeoutError = null
-                        saveCore(core.copy(requestTimeoutMs = m.toLong() * 60000L), app)
-                    }
-                }) {
+                ClayButton(
+                    onClick = {
+                        val m = timeoutInput.toIntOrNull()
+                        if (m == null || m < 1) {
+                            timeoutError = context.getString(R.string.settings_timeout_error)
+                        } else {
+                            timeoutError = null
+                            saveCore(core.copy(requestTimeoutMs = m.toLong() * 60000L), app)
+                        }
+                    },
+                    modifier = Modifier.semantics { contentDescription = "Ubah timeout" },
+                ) {
                     Text(text = stringResource(R.string.settings_port_change))
                 }
             }
@@ -368,7 +359,12 @@ fun SettingsScreen(
                     Text(text = stringResource(R.string.settings_cf_tunnel), color = colors.onSurface, fontWeight = FontWeight.Bold, fontSize = 14.sp)
                     Text(text = stringResource(R.string.settings_cf_desc), color = colors.onSurface.copy(alpha = 0.6f), fontSize = 12.sp)
                 }
-                Switch(checked = false, onCheckedChange = null, enabled = false)
+                Switch(
+                    checked = false,
+                    onCheckedChange = null,
+                    enabled = false,
+                    modifier = Modifier.semantics { contentDescription = "Cloudflare Quick Tunnel" },
+                )
                 Spacer(Modifier.width(8.dp))
                 Text(text = segera, color = colors.onSurface.copy(alpha = 0.6f), fontSize = 11.sp)
             }
@@ -391,9 +387,8 @@ fun SettingsScreen(
             }
             Spacer(Modifier.height(8.dp))
             ClayButton(onClick = {
-                val seam = restoreContentFromSeam()
-                if (seam != null) {
-                    processRestore(seam)
+                if (restoreContent != null) {
+                    processRestore(restoreContent)
                 } else {
                     openDocLauncher.launch(arrayOf("application/json", "text/plain", "*/*"))
                 }
@@ -423,7 +418,11 @@ fun SettingsScreen(
             confirmButton = {
                 TextButton(onClick = {
                     showExportConfirm = false
-                    createDocLauncher.launch("omniroute_backup.json")
+                    if (onExportLaunch != null) {
+                        onExportLaunch.invoke()
+                    } else {
+                        createDocLauncher.launch("omniroute_backup.json")
+                    }
                 }) { Text(stringResource(R.string.settings_export_confirm_yes)) }
             },
             dismissButton = {
@@ -433,8 +432,8 @@ fun SettingsScreen(
     }
 
     if (showKeyDialog) {
-        val key = remember { "sk-omni-" + (1..24).map { "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789".random() }.joinToString("") }
-        generatedKey = key
+        val secureRandom = remember { SecureRandom() }
+        val key = remember { "sk-omni-" + (1..24).map { "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"[secureRandom.nextInt(62)] }.joinToString("") }
         AlertDialog(
             onDismissRequest = { showKeyDialog = false },
             title = { Text(stringResource(R.string.settings_create_key_title)) },
@@ -506,4 +505,3 @@ private fun formatUptimeSettings(seconds: Long): String {
     val minutes = (seconds % 3600) / 60
     return "${hours}j ${minutes}m"
 }
-
