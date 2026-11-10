@@ -43,6 +43,7 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -87,7 +88,7 @@ private fun Context.currentPalette(): ThemePalette.Palette {
 }
 
 /** Terjemahkan kunci sesuai bahasa yang tersimpan. */
-private fun Context.str(key: String): String {
+internal fun Context.str(key: String): String {
     return AppStrings.get(key, AppPrefs.snapshot(this).language)
 }
 
@@ -121,6 +122,10 @@ private fun OmniRouteApp() {
     val palette = currentPalette(context, prefs.theme)
     val background = if (prefs.oled && prefs.theme == "dark") Color(0xFF000000) else palette.background
 
+    // State browser in-app di-hoist supaya tab tetap hidup saat pindah bottom-nav.
+    val browserState = remember { BrowserState(context) }
+    DisposableEffect(Unit) { onDispose { browserState.destroyAll() } }
+
     Column(
         modifier = Modifier.fillMaxSize().background(background).statusBarsPadding().navigationBarsPadding()
     ) {
@@ -139,7 +144,12 @@ private fun OmniRouteApp() {
                     palette = palette,
                     context = context,
                 )
-                1 -> DashboardTab(prefs = prefs, palette = palette, context = context)
+                1 -> InAppBrowser(
+                    state = browserState,
+                    homeUrl = "http://127.0.0.1:${prefs.port}",
+                    palette = palette,
+                    context = context,
+                )
                 else -> SettingsTab(
                     prefs = prefs,
                     onPrefsChange = { prefs = it },
@@ -539,107 +549,6 @@ private fun lineColor(line: String, palette: ThemePalette.Palette): Color = when
     line.contains("ROUTE") -> Color(0xFF60A5FA)
     line.contains("METRIC") -> Color(0xFFA3E635)
     else -> palette.textLo
-}
-
-@Composable
-private fun DashboardTab(prefs: AppPrefs.Snapshot, palette: ThemePalette.Palette, context: Context) {
-    var url by remember { mutableStateOf("http://127.0.0.1:${prefs.port}") }
-    var stopLoad by remember { mutableStateOf(false) }
-    var webView: WebView? by remember { mutableStateOf(null) }
-
-    Column(
-        modifier = Modifier.fillMaxSize().padding(horizontal = 20.dp, vertical = 16.dp),
-        verticalArrangement = Arrangement.spacedBy(14.dp)
-    ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(context.str("dashboard_title"), color = palette.textHi, fontWeight = FontWeight.ExtraBold, fontSize = 18.sp)
-            Spacer(Modifier.weight(1f))
-            QuickProbeButton(port = prefs.port, palette = palette, context = context)
-        }
-
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-            TabGroupPill(context.str("upstream_gateway"), palette = palette, context = context)
-            Spacer(Modifier.weight(1f))
-            TabGroupPill(context.str("upstream_llms"), palette = palette, context = context)
-            TabGroupPill(context.str("upstream_docs"), palette = palette, context = context)
-        }
-
-        ClayCard(modifier = Modifier.fillMaxWidth(), palette = palette) {
-            Column(modifier = Modifier.padding(12.dp)) {
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedTextField(
-                        value = url,
-                        onValueChange = { url = it },
-                        singleLine = true,
-                        modifier = Modifier.weight(1f),
-                        placeholder = { Text("http://127.0.0.1:8080") }
-                    )
-                    ActionButton(context.str("btn_refresh"), onClick = { webView?.loadUrl(url) }, palette = palette, context = context)
-                    ActionButton(context.str("btn_stop_load"), onClick = { webView?.stopLoading() }, palette = palette, context = context)
-                    ActionButton(context.str("btn_open_browser"), onClick = { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url))) }, palette = palette, context = context)
-                }
-            }
-        }
-
-        ClayCard(modifier = Modifier.weight(1f).fillMaxWidth(), palette = palette) {
-            AndroidView(
-                factory = { ctx ->
-                    WebView(ctx).apply {
-                        settings.javaScriptEnabled = true
-                        settings.domStorageEnabled = true
-                        settings.cacheMode = android.webkit.WebSettings.LOAD_NO_CACHE
-                        loadUrl(url)
-                        webView = this
-                    }
-                },
-                modifier = Modifier.fillMaxSize()
-            )
-        }
-
-        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            UpstreamStatus(context.str("upstream_openai"), "200 OK", palette = palette, context = context)
-            UpstreamStatus(context.str("upstream_anthropic"), context.str("status_standby_short"), palette = palette, context = context)
-            UpstreamStatus(context.str("upstream_ollama"), "200 OK", palette = palette, context = context)
-        }
-    }
-}
-
-@Composable
-private fun QuickProbeButton(port: Int, palette: ThemePalette.Palette, context: Context) {
-    ActionButton(context.str("btn_quick_test"), onClick = {
-        val ok = NativeBridge.health(port) == 1
-        AppLog.log("METRIC", "GET /healthz => ${if (ok) "online" else "standby"}")
-    }, primary = true, palette = palette, context = context)
-}
-
-@Composable
-private fun TabGroupPill(label: String, palette: ThemePalette.Palette, context: Context) {
-    Box(
-        modifier = Modifier
-            .clip(Pill)
-            .background(palette.surface)
-            .padding(horizontal = 14.dp, vertical = 9.dp)
-    ) {
-        Text(label, color = palette.textLo, fontSize = 12.sp, fontWeight = FontWeight.Medium)
-    }
-}
-
-@Composable
-private fun UpstreamStatus(name: String, state: String, palette: ThemePalette.Palette, context: Context) {
-    val ok = state.startsWith("200")
-    Row(
-        modifier = Modifier
-            .clip(RoundedCornerShape(18.dp))
-            .background(palette.card.copy(alpha = 0.8f))
-            .padding(horizontal = 12.dp, vertical = 8.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Box(Modifier.size(8.dp).clip(CircleShape).background(if (ok) palette.emerald else Color(0xFFFACC15)))
-        Spacer(Modifier.width(8.dp))
-        Text(name, color = palette.textHi, fontSize = 11.sp)
-        Spacer(Modifier.width(8.dp))
-        Text(state, color = if (ok) palette.emerald else Color(0xFFFACC15), fontSize = 11.sp, fontWeight = FontWeight.Bold)
-    }
 }
 
 @Composable
