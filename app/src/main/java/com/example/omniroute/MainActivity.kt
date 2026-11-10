@@ -1,5 +1,6 @@
 package com.example.omniroute
 
+import android.app.AlertDialog
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
@@ -8,6 +9,7 @@ import android.net.Uri
 import android.os.Bundle
 import android.provider.Settings
 import android.webkit.WebView
+import java.io.File
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.background
@@ -59,23 +61,16 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import org.json.JSONObject
-
-private val Gold = Color(0xFFE8B74A)
-private val Emerald = Color(0xFF34D399)
-private val Slate = Color(0xFF0B1220)
-private val SlateCard = Color(0xFF131B2E)
-private val TextHi = Color(0xFFF8FAFC)
-private val TextLo = Color(0xFF94A3B8)
-private val CardShape = RoundedCornerShape(32.dp)
-private val Pill = RoundedCornerShape(999.dp)
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        AppLog.log("BOOT", "OmniRoute Rust core ready (arm64-v8a)")
+        AppLog.log("BOOT", "OmniRoute Android app ready")
         setContent { OmniRouteApp() }
     }
 }
@@ -83,6 +78,17 @@ class MainActivity : ComponentActivity() {
 private fun Context.isBatteryOptimIgnorable(): Boolean {
     val pm = getSystemService(Context.POWER_SERVICE) as android.os.PowerManager
     return pm.isIgnoringBatteryOptimizations(packageName)
+}
+
+/** Ambil palet warna sesuai tema yang tersimpan. */
+private fun Context.currentPalette(): ThemePalette.Palette {
+    val prefs = AppPrefs.snapshot(this)
+    return ThemePalette.get(this, prefs.theme)
+}
+
+/** Terjemahkan kunci sesuai bahasa yang tersimpan. */
+private fun Context.str(key: String): String {
+    return AppStrings.get(key, AppPrefs.snapshot(this).language)
 }
 
 @Composable
@@ -104,7 +110,7 @@ private fun OmniRouteApp() {
         while (true) {
             delay(1200)
             if (ProotRuntime.isInstalled(context)) {
-                val online = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { ProotRuntime.probe(prefs.port) }
+                val online = withContext(Dispatchers.IO) { ProotRuntime.probe(prefs.port) }
                 statusText = if (online) "{\"status\":\"online\",\"port\":${prefs.port},\"engine\":\"omniroute-proot\"}" else "{\"status\":\"standby\",\"port\":${prefs.port},\"engine\":\"omniroute-proot\"}"
             } else {
                 statusText = NativeBridge.statusJson()
@@ -112,12 +118,13 @@ private fun OmniRouteApp() {
         }
     }
 
-    val background = if (prefs.oled && prefs.theme == "dark") Color(0xFF000000) else Slate
+    val palette = currentPalette(context, prefs.theme)
+    val background = if (prefs.oled && prefs.theme == "dark") Color(0xFF000000) else palette.background
 
     Column(
         modifier = Modifier.fillMaxSize().background(background).statusBarsPadding().navigationBarsPadding()
     ) {
-        HeaderStrip(background = background, status = statusText, prefs = prefs)
+        HeaderStrip(background = background, status = statusText, prefs = prefs, palette = palette, context = context)
 
         Box(modifier = Modifier.weight(1f)) {
             when (tab) {
@@ -129,21 +136,31 @@ private fun OmniRouteApp() {
                     setupProgress = setupProgress,
                     onInstall = { scope.launch { ProotBootstrap.installAll(context) } },
                     onUpdatePrefs = { prefs = AppPrefs.snapshot(context) },
+                    palette = palette,
+                    context = context,
                 )
-                1 -> DashboardTab(prefs = prefs)
+                1 -> DashboardTab(prefs = prefs, palette = palette, context = context)
                 else -> SettingsTab(
                     prefs = prefs,
                     onPrefsChange = { prefs = it },
+                    palette = palette,
+                    context = context,
                 )
             }
         }
 
-        BottomNavBar(selected = tab, onSelect = { tab = it })
+        BottomNavBar(selected = tab, onSelect = { tab = it }, palette = palette, context = context)
     }
 }
 
+/** Baca palet sesuai tema (rekomposisi otomatis saat prefs.theme berubah). */
 @Composable
-private fun HeaderStrip(background: Color, status: String, prefs: AppPrefs.Snapshot) {
+private fun currentPalette(context: Context, theme: String): ThemePalette.Palette {
+    return ThemePalette.get(context, theme)
+}
+
+@Composable
+private fun HeaderStrip(background: Color, status: String, prefs: AppPrefs.Snapshot, palette: ThemePalette.Palette, context: Context) {
     val json = runCatching { JSONObject(status) }.getOrDefault(JSONObject())
     val online = json.optString("status") == "online"
     val uptime = json.optLong("uptime_secs")
@@ -158,41 +175,44 @@ private fun HeaderStrip(background: Color, status: String, prefs: AppPrefs.Snaps
                 modifier = Modifier
                     .size(44.dp)
                     .clip(CircleShape)
-                    .background(if (online) Emerald.copy(alpha = 0.18f) else Color(0xFF1E293B))
-                    .border(1.dp, if (online) Emerald.copy(alpha = 0.55f) else Color(0xFF334155), CircleShape),
+                    .background(if (online) palette.emerald.copy(alpha = 0.18f) else palette.inactive.copy(alpha = 0.18f))
+                    .border(1.dp, if (online) palette.emerald.copy(alpha = 0.55f) else palette.inactive.copy(alpha = 0.35f), CircleShape),
                 contentAlignment = Alignment.Center
             ) {
-                Text("OR", color = Gold, fontWeight = FontWeight.Black, fontSize = 15.sp)
+                Text("OR", color = palette.gold, fontWeight = FontWeight.Black, fontSize = 15.sp)
             }
             Spacer(Modifier.width(12.dp))
             Column {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("OmniRoute", color = TextHi, fontWeight = FontWeight.ExtraBold, fontSize = 20.sp)
+                    Text(context.str("app_name"), color = palette.textHi, fontWeight = FontWeight.ExtraBold, fontSize = 20.sp)
                     Spacer(Modifier.width(8.dp))
-                    StatusDot(online = online)
+                    StatusDot(online = online, palette = palette)
                 }
-                Text(if (online) "Daemon online • ${prefs.port}\n" else "Standby • port ${prefs.port}", color = TextLo, fontSize = 12.sp)
+                Text(
+                    if (online) "${context.str("header_online")}${prefs.port}\n" else "${context.str("header_standby")}${prefs.port}\n",
+                    color = palette.textLo, fontSize = 12.sp
+                )
             }
         }
     }
 }
 
 @Composable
-private fun StatusDot(online: Boolean) {
-    val c = if (online) Emerald else Color(0xFF475569)
+private fun StatusDot(online: Boolean, palette: ThemePalette.Palette) {
+    val c = if (online) palette.emerald else palette.inactive
     Box(modifier = Modifier.size(10.dp).clip(CircleShape).background(c))
 }
 
 @Composable
-private fun BottomNavBar(selected: Int, onSelect: (Int) -> Unit) {
-    val items = listOf("Service", "Dashboard", "Settings")
+private fun BottomNavBar(selected: Int, onSelect: (Int) -> Unit, palette: ThemePalette.Palette, context: Context) {
+    val items = listOf(context.str("tab_service"), context.str("tab_dashboard"), context.str("tab_settings"))
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = 20.dp, vertical = 18.dp)
             .shadow(18.dp, Pill, ambientColor = Color.Black.copy(0.35f), spotColor = Color.Black.copy(0.45f))
             .clip(Pill)
-            .background(SlateCard.copy(alpha = 0.96f))
+            .background(palette.card.copy(alpha = 0.96f))
             .padding(6.dp),
         horizontalArrangement = Arrangement.spacedBy(6.dp)
     ) {
@@ -202,23 +222,26 @@ private fun BottomNavBar(selected: Int, onSelect: (Int) -> Unit) {
                 modifier = Modifier
                     .weight(1f)
                     .clip(Pill)
-                    .background(if (active) Gold.copy(alpha = 0.16f) else Color.Transparent)
+                    .background(if (active) palette.gold.copy(alpha = 0.16f) else Color.Transparent)
                     .clickable { onSelect(index) }
                     .padding(vertical = 12.dp),
                 contentAlignment = Alignment.Center
             ) {
-                Text(label, color = if (active) Gold else TextLo, fontWeight = if (active) FontWeight.Bold else FontWeight.Medium, fontSize = 13.sp)
+                Text(label, color = if (active) palette.gold else palette.textLo, fontWeight = if (active) FontWeight.Bold else FontWeight.Medium, fontSize = 13.sp)
             }
         }
     }
 }
 
+private val Pill = RoundedCornerShape(999.dp)
+private val CardShape = RoundedCornerShape(32.dp)
+
 @Composable
-private fun ClayCard(modifier: Modifier = Modifier, content: @Composable () -> Unit) {
+private fun ClayCard(modifier: Modifier = Modifier, palette: ThemePalette.Palette, content: @Composable () -> Unit) {
     Card(
         modifier = modifier,
         shape = CardShape,
-        colors = CardDefaults.cardColors(containerColor = SlateCard),
+        colors = CardDefaults.cardColors(containerColor = palette.card),
         elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
     ) { content() }
 }
@@ -232,8 +255,9 @@ private fun ServiceTab(
     setupProgress: String,
     onInstall: () -> Unit,
     onUpdatePrefs: () -> Unit,
+    palette: ThemePalette.Palette,
+    context: Context,
 ) {
-    val context = LocalContext.current
     val json = runCatching { JSONObject(status) }.getOrDefault(JSONObject())
     val online = json.optString("status") == "online"
     val uptime = json.optLong("uptime_secs")
@@ -248,70 +272,74 @@ private fun ServiceTab(
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
         if (!engineReady) {
-            ClayCard(modifier = Modifier.fillMaxWidth()) {
+            ClayCard(modifier = Modifier.fillMaxWidth(), palette = palette) {
                 Column(modifier = Modifier.padding(22.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Text("Engine OmniRoute Belum Terpasang", color = TextHi, fontWeight = FontWeight.ExtraBold, fontSize = 17.sp)
-                    Text(
-                        "Butuh sekali instal: rootfs Debian 12, Node.js 22, dan paket omniroute. Komponen yang sudah ada otomatis dilewati.",
-                        color = TextLo, fontSize = 12.sp
-                    )
-                    if (setupProgress.isNotEmpty()) Text(setupProgress, color = Gold, fontSize = 12.sp)
+                    Text(context.str("engine_not_installed"), color = palette.textHi, fontWeight = FontWeight.ExtraBold, fontSize = 17.sp)
+                    Text(context.str("engine_not_installed_desc"), color = palette.textLo, fontSize = 12.sp)
+                    if (setupProgress.isNotEmpty()) Text(setupProgress, color = palette.gold, fontSize = 12.sp)
                     ActionButton(
-                        label = if (setupRunning) "Memasang..." else "Install Engine",
+                        label = if (setupRunning) context.str("btn_installing") else context.str("btn_install_engine"),
                         modifier = Modifier.fillMaxWidth(),
                         primary = !setupRunning,
-                        onClick = { if (!setupRunning) onInstall() }
+                        onClick = { if (!setupRunning) onInstall() },
+                        palette = palette,
+                        context = context,
                     )
                 }
             }
         }
 
-        ClayCard(modifier = Modifier.fillMaxWidth()) {
+        ClayCard(modifier = Modifier.fillMaxWidth(), palette = palette) {
             Column(modifier = Modifier.padding(22.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Column {
-                        Text("PRoot: " + if (online) "Running" else "Stopped", color = TextHi, fontWeight = FontWeight.ExtraBold, fontSize = 21.sp)
-                        Text("Gateway http://127.0.0.1:${prefs.port}", color = TextLo, fontSize = 12.sp)
+                        Text("PRoot: " + if (online) context.str("status_online") else context.str("status_stopped"), color = palette.textHi, fontWeight = FontWeight.ExtraBold, fontSize = 21.sp)
+                        Text("${context.str("gateway")}${prefs.port}", color = palette.textLo, fontSize = 12.sp)
                     }
                     Spacer(Modifier.weight(1f))
-                    StreamBadge(online = online)
+                    StreamBadge(online = online, palette = palette, context = context)
                 }
 
-                GridTelemetry(uptime = uptime, hits = hits, inflight = inflight, port = prefs.port, arch = "aarch64")
+                GridTelemetry(uptime = uptime, hits = hits, inflight = inflight, port = prefs.port, arch = "aarch64", palette = palette, context = context)
 
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     ActionButton(
-                        label = if (online) "Stop" else "Start",
+                        label = if (online) context.str("btn_stop") else context.str("btn_start"),
                         modifier = Modifier.weight(1f),
                         primary = true,
-                        onClick = { OmniRouteToggleAction(context, online, onUpdatePrefs) }
+                        onClick = { OmniRouteToggleAction(context, online, onUpdatePrefs) },
+                        palette = palette,
+                        context = context,
                     )
-                    ActionButton("Restart", modifier = Modifier.weight(1f), onClick = {
+                    ActionButton(context.str("btn_restart"), modifier = Modifier.weight(1f), onClick = {
                         val intent = Intent(context, com.example.omniroute.service.OmniRouteService::class.java).apply { action = com.example.omniroute.service.OmniRouteService.ACTION_RESTART }
                         if (android.os.Build.VERSION.SDK_INT >= 26) context.startForegroundService(intent) else context.startService(intent)
-                        AppLog.log("ROUTE", "Restart requested")
+                        AppLog.log("ROUTE", context.str("btn_restart"))
                         onUpdatePrefs()
-                    })
+                    }, palette = palette, context = context)
                 }
 
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    ActionButton("Git Pull", modifier = Modifier.weight(1f), onClick = {
-                        AppLog.log("INFO", "git pull dispatch (native stub)")
-                    })
-                    ActionButton("Flush Cache", modifier = Modifier.weight(1f), onClick = {
+                    ActionButton(context.str("btn_git_pull"), modifier = Modifier.weight(1f), onClick = {
+                        scopeGitPull(context)
+                    }, palette = palette, context = context)
+                    ActionButton(context.str("btn_flush_cache"), modifier = Modifier.weight(1f), onClick = {
                         NativeBridge.flushCache()
                         AppLog.log("METRIC", "cache flushed")
-                    })
-                    ActionButton("PRoot CLI", modifier = Modifier.weight(1f), onClick = {
-                        AppLog.log("INFO", "opening PRoot shell placeholder")
-                    })
+                    }, palette = palette, context = context)
+                    ActionButton(context.str("btn_proot_cli"), modifier = Modifier.weight(1f), onClick = {
+                        openProotCli(context)
+                    }, palette = palette, context = context)
+                    ActionButton(context.str("btn_check_update"), modifier = Modifier.weight(1f), onClick = {
+                        scopeCheckUpdate(context)
+                    }, palette = palette, context = context)
                 }
             }
         }
 
-        ClayCard(modifier = Modifier.fillMaxWidth()) {
+        ClayCard(modifier = Modifier.fillMaxWidth(), palette = palette) {
             Column(modifier = Modifier.padding(18.dp)) {
-                Text("PROOT-SERVICE.LOG", color = Gold, fontWeight = FontWeight.ExtraBold, fontSize = 12.sp, letterSpacing = 1.2.sp)
+                Text(context.str("log_proot_service"), color = palette.gold, fontWeight = FontWeight.ExtraBold, fontSize = 12.sp, letterSpacing = 1.2.sp)
                 Spacer(Modifier.height(10.dp))
                 Column(
                     modifier = Modifier
@@ -322,22 +350,105 @@ private fun ServiceTab(
                         .padding(14.dp)
                 ) {
                     AppLog.buffer.takeLast(80).forEach { line ->
-                        Text(line, color = lineColor(line), fontFamily = FontFamily.Monospace, fontSize = 11.sp)
+                        Text(line, color = lineColor(line, palette), fontFamily = FontFamily.Monospace, fontSize = 11.sp)
                     }
                 }
             }
         }
 
-        ClayCard(modifier = Modifier.fillMaxWidth()) {
+        ClayCard(modifier = Modifier.fillMaxWidth(), palette = palette) {
             Column(modifier = Modifier.padding(20.dp)) {
-                Text("System Paths", color = TextHi, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                Text(context.str("system_paths"), color = palette.textHi, fontWeight = FontWeight.Bold, fontSize = 15.sp)
                 Spacer(Modifier.height(8.dp))
-                PathRow("Gateway", "http://127.0.0.1:${prefs.port}")
-                PathRow("Rootfs Debian", "/data/data/com.example.omniroute/files/debian")
-                PathRow("Architecture", "aarch64")
-                PathRow("Upstream", prefs.upstream)
-                PathRow("Rootfs Distro", "Debian 12 Bookworm PRoot")
+                PathRow(context.str("path_gateway"), "http://127.0.0.1:${prefs.port}", palette = palette, context = context)
+                PathRow(context.str("path_rootfs"), "/data/data/com.example.omniroute/files/proot/rootfs", palette = palette, context = context)
+                PathRow(context.str("path_arch"), "aarch64", palette = palette, context = context)
+                PathRow(context.str("path_upstream"), prefs.upstream, palette = palette, context = context)
+                PathRow(context.str("path_distro"), "Debian 12 Bookworm PRoot", palette = palette, context = context)
             }
+        }
+    }
+}
+
+private var gitPullScope: kotlinx.coroutines.CoroutineScope? = null
+private var updateScope: kotlinx.coroutines.CoroutineScope? = null
+
+private fun scopeGitPull(context: Context) {
+    val scope = kotlinx.coroutines.CoroutineScope(Dispatchers.IO)
+    gitPullScope = scope
+    scope.launch {
+        AppLog.log("INFO", "git pull: memulai...")
+        try {
+            // Coba npm update -g omniroute di dalam proot
+            val result = runProotCmd(context, listOf("/root/node/bin/npm", "update", "-g", "omniroute"))
+            AppLog.log("INFO", "git pull: ${result.take(300)}")
+        } catch (e: Exception) {
+            AppLog.log("ERROR", "git pull gagal: ${e.message}")
+        }
+        gitPullScope = null
+    }
+}
+
+private fun scopeCheckUpdate(context: Context) {
+    val scope = kotlinx.coroutines.CoroutineScope(Dispatchers.IO)
+    updateScope = scope
+    scope.launch {
+        AppLog.log("INFO", "cek pembaruan: memeriksa npm registry...")
+        try {
+            val result = runProotCmd(context, listOf("/root/node/bin/npm", "view", "omniroute", "version"))
+            AppLog.log("INFO", "versi terbaru npm: ${result.trim().take(100)}")
+        } catch (e: Exception) {
+            AppLog.log("ERROR", "cek pembaruan gagal: ${e.message}")
+        }
+        updateScope = null
+    }
+}
+
+private fun runProotCmd(context: Context, cmd: List<String>): String {
+    val prootDir = File(context.filesDir, "proot")
+    val fullCmd = listOf(
+        ProotRuntime.prootBinary(context),
+        "--kill-on-exit", "-0",
+        "-r", ProotRuntime.rootfs(context).absolutePath,
+        "-b", "/dev",
+        "-b", "/proc",
+        "-b", "/sys",
+        "-b", ProotRuntime.nodeRoot(context).absolutePath + ":/root/node",
+        "-w", "/root",
+        "/usr/bin/env", "-i",
+        "HOME=/root",
+        "PATH=/root/node/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+        "TERM=xterm",
+    ) + cmd
+    val pb = ProcessBuilder(*fullCmd.toTypedArray())
+    pb.environment()["PROOT_LOADER"] = ProotRuntime.loaderBinary(context) ?: ""
+    pb.environment()["PROOT_TMP_DIR"] = File(prootDir, "tmp").absolutePath
+    pb.environment()["PROOT_NO_SECCOMP"] = "1"
+    pb.environment()["LD_LIBRARY_PATH"] = File(prootDir, "lib").absolutePath
+    pb.redirectErrorStream(true)
+    val proc = pb.start()
+    val output = proc.inputStream.bufferedReader().readText()
+    proc.waitFor()
+    return output
+}
+
+private fun openProotCli(context: Context) {
+    // Jalankan perintah sederhana di dalam proot dan tampilkan hasilnya
+    val scope = kotlinx.coroutines.CoroutineScope(Dispatchers.IO)
+    scope.launch {
+        try {
+            val result = runProotCmd(context, listOf("/root/node/bin/node", "--version"))
+            val msg = "Node di dalam proot: ${result.trim()}"
+            withContext(Dispatchers.Main) {
+                AlertDialog.Builder(context)
+                    .setTitle("PRoot CLI")
+                    .setMessage(msg)
+                    .setPositiveButton("OK") { _, _ -> }
+                    .show()
+            }
+            AppLog.log("INFO", "PRoot CLI: $msg")
+        } catch (e: Exception) {
+            AppLog.log("ERROR", "PRoot CLI gagal: ${e.message}")
         }
     }
 }
@@ -347,92 +458,91 @@ private fun OmniRouteToggleAction(context: Context, currentlyOnline: Boolean, on
         action = if (currentlyOnline) com.example.omniroute.service.OmniRouteService.ACTION_STOP else com.example.omniroute.service.OmniRouteService.ACTION_START
     }
     if (android.os.Build.VERSION.SDK_INT >= 26) context.startForegroundService(intent) else context.startService(intent)
-    AppLog.log("INFO", if (currentlyOnline) "Stop requested" else "Start requested")
+    AppLog.log("INFO", if (currentlyOnline) context.str("btn_stop") else context.str("btn_start"))
     onDone()
 }
 
 @Composable
-private fun StreamBadge(online: Boolean) {
+private fun StreamBadge(online: Boolean, palette: ThemePalette.Palette, context: Context) {
     Row(
         modifier = Modifier
             .clip(Pill)
-            .background(if (online) Emerald.copy(alpha = 0.15f) else Color(0xFF1E293B))
-            .border(1.dp, if (online) Emerald.copy(alpha = 0.5f) else Color(0xFF334155), Pill)
+            .background(if (online) palette.emerald.copy(alpha = 0.15f) else palette.inactive.copy(alpha = 0.15f))
+            .border(1.dp, if (online) palette.emerald.copy(alpha = 0.5f) else palette.inactive.copy(alpha = 0.3f), Pill)
             .padding(horizontal = 12.dp, vertical = 7.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Box(Modifier.size(8.dp).clip(CircleShape).background(if (online) Emerald else Color(0xFF64748B)))
+        Box(Modifier.size(8.dp).clip(CircleShape).background(if (online) palette.emerald else palette.inactive))
         Spacer(Modifier.width(6.dp))
-        Text(if (online) "Stream Active" else "Stream idle", color = TextHi, fontSize = 11.sp, fontWeight = FontWeight.Medium)
+        Text(if (online) context.str("stream_active") else context.str("stream_idle"), color = palette.textHi, fontSize = 11.sp, fontWeight = FontWeight.Medium)
     }
 }
 
 @Composable
-private fun GridTelemetry(uptime: Long, hits: Long, inflight: Int, port: Int, arch: String) {
+private fun GridTelemetry(uptime: Long, hits: Long, inflight: Int, port: Int, arch: String, palette: ThemePalette.Palette, context: Context) {
     fun fmt(s: Long): String = "%02dh %02dm".format(s / 3600, (s % 3600) / 60)
     Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
-        MetricCard("UPTIME", fmt(uptime), modifier = Modifier.weight(1f))
-        MetricCard("ROUTES", hits.toString(), modifier = Modifier.weight(1f))
-        MetricCard("INFLIGHT", inflight.toString(), modifier = Modifier.weight(1f))
+        MetricCard(context.str("tele_uptime"), fmt(uptime), modifier = Modifier.weight(1f), palette = palette, context = context)
+        MetricCard(context.str("tele_routes"), hits.toString(), modifier = Modifier.weight(1f), palette = palette, context = context)
+        MetricCard(context.str("tele_inflight"), inflight.toString(), modifier = Modifier.weight(1f), palette = palette, context = context)
     }
     Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
-        MetricCard("PORT", port.toString(), modifier = Modifier.weight(1f))
-        MetricCard("ARCH", arch, modifier = Modifier.weight(1f))
-        MetricCard("ENGINE", "Rust", modifier = Modifier.weight(1f))
+        MetricCard(context.str("tele_port"), port.toString(), modifier = Modifier.weight(1f), palette = palette, context = context)
+        MetricCard(context.str("tele_arch"), arch, modifier = Modifier.weight(1f), palette = palette, context = context)
+        MetricCard(context.str("tele_engine"), if (ProotRuntime.isInstalled(LocalContext.current)) context.str("engine_proot") else context.str("engine_rust"), modifier = Modifier.weight(1f), palette = palette, context = context)
     }
 }
 
 @Composable
-private fun MetricCard(label: String, value: String, modifier: Modifier = Modifier) {
+private fun MetricCard(label: String, value: String, modifier: Modifier = Modifier, palette: ThemePalette.Palette, context: Context) {
     val shape = RoundedCornerShape(22.dp)
     Box(
         modifier = modifier
             .shadow(10.dp, shape, ambientColor = Color.Black.copy(0.35f), spotColor = Color.Black.copy(0.4f))
             .clip(shape)
-            .background(Color(0xFF18213A))
+            .background(palette.surface)
             .padding(14.dp)
     ) {
         Column {
-            Text(label, color = TextLo, fontSize = 10.sp, fontWeight = FontWeight.Medium, letterSpacing = 1.1.sp)
+            Text(label, color = palette.textLo, fontSize = 10.sp, fontWeight = FontWeight.Medium, letterSpacing = 1.1.sp)
             Spacer(Modifier.height(6.dp))
-            Text(value, color = TextHi, fontWeight = FontWeight.ExtraBold, fontSize = 16.sp)
+            Text(value, color = palette.textHi, fontWeight = FontWeight.ExtraBold, fontSize = 16.sp)
         }
     }
 }
 
 @Composable
-private fun PathRow(label: String, path: String) {
+private fun PathRow(label: String, path: String, palette: ThemePalette.Palette, context: Context) {
     Row(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
-        Text(label, color = TextLo, modifier = Modifier.width(150.dp), fontSize = 12.sp)
-        Text(path, color = TextHi, fontSize = 12.sp, fontFamily = FontFamily.Monospace)
+        Text(label, color = palette.textLo, modifier = Modifier.width(150.dp), fontSize = 12.sp)
+        Text(path, color = palette.textHi, fontSize = 12.sp, fontFamily = FontFamily.Monospace)
     }
 }
 
 @Composable
-private fun ActionButton(label: String, modifier: Modifier = Modifier, primary: Boolean = false, onClick: () -> Unit) {
+private fun ActionButton(label: String, modifier: Modifier = Modifier, primary: Boolean = false, onClick: () -> Unit, palette: ThemePalette.Palette, context: Context) {
     val shape = RoundedCornerShape(20.dp)
     Box(
         modifier = modifier
             .clip(shape)
-            .background(if (primary) Gold else SlateCard.copy(alpha = 0.7f))
+            .background(if (primary) palette.gold else palette.card.copy(alpha = 0.7f))
             .clickable(onClick = onClick)
             .padding(vertical = 12.dp, horizontal = 10.dp),
         contentAlignment = Alignment.Center
     ) {
-        Text(label, color = if (primary) Color(0xFF1F2937) else TextHi, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+        Text(label, color = if (primary) Color(0xFF1F2937) else palette.textHi, fontWeight = FontWeight.Bold, fontSize = 13.sp)
     }
 }
 
-private fun lineColor(line: String): Color = when {
-    line.contains("ERROR") -> Color(0xFFF87171)
+private fun lineColor(line: String, palette: ThemePalette.Palette): Color = when {
+    line.contains("ERROR") -> palette.error
     line.contains("ROUTE") -> Color(0xFF60A5FA)
     line.contains("METRIC") -> Color(0xFFA3E635)
-    else -> Color(0xFFCBD5E1)
+    else -> palette.textLo
 }
 
 @Composable
-private fun DashboardTab(prefs: AppPrefs.Snapshot) {
-    val context = LocalContext.current
+private fun DashboardTab(prefs: AppPrefs.Snapshot, palette: ThemePalette.Palette, context: Context) {
     var url by remember { mutableStateOf("http://127.0.0.1:${prefs.port}") }
     var stopLoad by remember { mutableStateOf(false) }
     var webView: WebView? by remember { mutableStateOf(null) }
@@ -442,19 +552,19 @@ private fun DashboardTab(prefs: AppPrefs.Snapshot) {
         verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Text("OmniRoute WebView", color = TextHi, fontWeight = FontWeight.ExtraBold, fontSize = 18.sp)
+            Text(context.str("dashboard_title"), color = palette.textHi, fontWeight = FontWeight.ExtraBold, fontSize = 18.sp)
             Spacer(Modifier.weight(1f))
-            QuickProbeButton(port = prefs.port)
+            QuickProbeButton(port = prefs.port, palette = palette, context = context)
         }
 
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-            TabGroupPill("Gateway")
+            TabGroupPill(context.str("upstream_gateway"), palette = palette, context = context)
             Spacer(Modifier.weight(1f))
-            TabGroupPill("Local LLMs")
-            TabGroupPill("Docs / Swagger")
+            TabGroupPill(context.str("upstream_llms"), palette = palette, context = context)
+            TabGroupPill(context.str("upstream_docs"), palette = palette, context = context)
         }
 
-        ClayCard(modifier = Modifier.fillMaxWidth()) {
+        ClayCard(modifier = Modifier.fillMaxWidth(), palette = palette) {
             Column(modifier = Modifier.padding(12.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     OutlinedTextField(
@@ -464,14 +574,14 @@ private fun DashboardTab(prefs: AppPrefs.Snapshot) {
                         modifier = Modifier.weight(1f),
                         placeholder = { Text("http://127.0.0.1:8080") }
                     )
-                    ActionButton("Refresh", onClick = { webView?.loadUrl(url) })
-                    ActionButton("Stop", onClick = { webView?.stopLoading() })
-                    ActionButton("Browser", onClick = { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url))) })
+                    ActionButton(context.str("btn_refresh"), onClick = { webView?.loadUrl(url) }, palette = palette, context = context)
+                    ActionButton(context.str("btn_stop_load"), onClick = { webView?.stopLoading() }, palette = palette, context = context)
+                    ActionButton(context.str("btn_open_browser"), onClick = { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url))) }, palette = palette, context = context)
                 }
             }
         }
 
-        ClayCard(modifier = Modifier.weight(1f).fillMaxWidth()) {
+        ClayCard(modifier = Modifier.weight(1f).fillMaxWidth(), palette = palette) {
             AndroidView(
                 factory = { ctx ->
                     WebView(ctx).apply {
@@ -487,54 +597,53 @@ private fun DashboardTab(prefs: AppPrefs.Snapshot) {
         }
 
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            UpstreamStatus("openai-main", "200 OK")
-            UpstreamStatus("anthropic-fallback", "Standby")
-            UpstreamStatus("ollama-local", "200 OK")
+            UpstreamStatus(context.str("upstream_openai"), "200 OK", palette = palette, context = context)
+            UpstreamStatus(context.str("upstream_anthropic"), context.str("status_standby_short"), palette = palette, context = context)
+            UpstreamStatus(context.str("upstream_ollama"), "200 OK", palette = palette, context = context)
         }
     }
 }
 
 @Composable
-private fun QuickProbeButton(port: Int) {
-    ActionButton("Quick Test", onClick = {
+private fun QuickProbeButton(port: Int, palette: ThemePalette.Palette, context: Context) {
+    ActionButton(context.str("btn_quick_test"), onClick = {
         val ok = NativeBridge.health(port) == 1
         AppLog.log("METRIC", "GET /healthz => ${if (ok) "online" else "standby"}")
-    }, primary = true)
+    }, primary = true, palette = palette, context = context)
 }
 
 @Composable
-private fun TabGroupPill(label: String) {
+private fun TabGroupPill(label: String, palette: ThemePalette.Palette, context: Context) {
     Box(
         modifier = Modifier
             .clip(Pill)
-            .background(SlateCard)
+            .background(palette.surface)
             .padding(horizontal = 14.dp, vertical = 9.dp)
     ) {
-        Text(label, color = TextLo, fontSize = 12.sp, fontWeight = FontWeight.Medium)
+        Text(label, color = palette.textLo, fontSize = 12.sp, fontWeight = FontWeight.Medium)
     }
 }
 
 @Composable
-private fun UpstreamStatus(name: String, state: String) {
+private fun UpstreamStatus(name: String, state: String, palette: ThemePalette.Palette, context: Context) {
     val ok = state.startsWith("200")
     Row(
         modifier = Modifier
             .clip(RoundedCornerShape(18.dp))
-            .background(SlateCard.copy(alpha = 0.8f))
+            .background(palette.card.copy(alpha = 0.8f))
             .padding(horizontal = 12.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Box(Modifier.size(8.dp).clip(CircleShape).background(if (ok) Emerald else Color(0xFFFACC15)))
+        Box(Modifier.size(8.dp).clip(CircleShape).background(if (ok) palette.emerald else Color(0xFFFACC15)))
         Spacer(Modifier.width(8.dp))
-        Text(name, color = TextHi, fontSize = 11.sp)
+        Text(name, color = palette.textHi, fontSize = 11.sp)
         Spacer(Modifier.width(8.dp))
-        Text(state, color = if (ok) Emerald else Color(0xFFFACC15), fontSize = 11.sp, fontWeight = FontWeight.Bold)
+        Text(state, color = if (ok) palette.emerald else Color(0xFFFACC15), fontSize = 11.sp, fontWeight = FontWeight.Bold)
     }
 }
 
 @Composable
-private fun SettingsTab(prefs: AppPrefs.Snapshot, onPrefsChange: (AppPrefs.Snapshot) -> Unit) {
-    val context = LocalContext.current
+private fun SettingsTab(prefs: AppPrefs.Snapshot, onPrefsChange: (AppPrefs.Snapshot) -> Unit, palette: ThemePalette.Palette, context: Context) {
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -542,51 +651,51 @@ private fun SettingsTab(prefs: AppPrefs.Snapshot, onPrefsChange: (AppPrefs.Snaps
             .padding(horizontal = 20.dp, vertical = 16.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
-        ClayCard(modifier = Modifier.fillMaxWidth()) {
+        ClayCard(modifier = Modifier.fillMaxWidth(), palette = palette) {
             Column(modifier = Modifier.padding(22.dp)) {
-                Text("Settings", color = TextHi, fontWeight = FontWeight.ExtraBold, fontSize = 22.sp)
+                Text(context.str("settings_title"), color = palette.textHi, fontWeight = FontWeight.ExtraBold, fontSize = 22.sp)
                 Spacer(Modifier.height(4.dp))
-                Text("Appearance, persistence, and update channel", color = TextLo, fontSize = 12.sp)
+                Text(context.str("settings_subtitle"), color = palette.textLo, fontSize = 12.sp)
             }
         }
 
-        SettingSectionTitle("Theme Selection")
-        ClayCard { Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            ThemeOption("Gelap (Dark Claymorphism)", prefs.theme == "dark") { AppPrefs.setTheme(context, "dark"); onPrefsChange(AppPrefs.snapshot(context)) }
-            ThemeOption("Terang (Light Claymorphism)", prefs.theme == "light") { AppPrefs.setTheme(context, "light"); onPrefsChange(AppPrefs.snapshot(context)) }
-            ThemeOption("Sistem (Auto Follow)", prefs.theme == "system") { AppPrefs.setTheme(context, "system"); onPrefsChange(AppPrefs.snapshot(context)) }
-            ToggleRow("OLED True Black (#000000)", prefs.oled) { AppPrefs.setOled(context, it); onPrefsChange(AppPrefs.snapshot(context)) }
+        SettingSectionTitle(context.str("theme_title"), palette = palette, context = context)
+        ClayCard(palette = palette) { Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            ThemeOption(context.str("theme_dark"), prefs.theme == "dark", palette = palette, isLight = prefs.theme == "light", context = context) { AppPrefs.setTheme(context, "dark"); onPrefsChange(AppPrefs.snapshot(context)) }
+            ThemeOption(context.str("theme_light"), prefs.theme == "light", palette = palette, isLight = prefs.theme == "light", context = context) { AppPrefs.setTheme(context, "light"); onPrefsChange(AppPrefs.snapshot(context)) }
+            ThemeOption(context.str("theme_system"), prefs.theme == "system", palette = palette, isLight = prefs.theme == "light", context = context) { AppPrefs.setTheme(context, "system"); onPrefsChange(AppPrefs.snapshot(context)) }
+            ToggleRow(context.str("oled"), prefs.oled, palette = palette, isLight = prefs.theme == "light", context = context) { AppPrefs.setOled(context, it); onPrefsChange(AppPrefs.snapshot(context)) }
         }}
 
-        SettingSectionTitle("Lokalisasi")
-        ClayCard { Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            ThemeOption("Bahasa Indonesia", prefs.language == "id") { AppPrefs.setLanguage(context, "id"); onPrefsChange(AppPrefs.snapshot(context)) }
-            ThemeOption("English (US)", prefs.language == "en") { AppPrefs.setLanguage(context, "en"); onPrefsChange(AppPrefs.snapshot(context)) }
+        SettingSectionTitle(context.str("language_title"), palette = palette, context = context)
+        ClayCard(palette = palette) { Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            ThemeOption(context.str("lang_id"), prefs.language == "id", palette = palette, isLight = prefs.theme == "light", context = context) { AppPrefs.setLanguage(context, "id"); onPrefsChange(AppPrefs.snapshot(context)) }
+            ThemeOption(context.str("lang_en"), prefs.language == "en", palette = palette, isLight = prefs.theme == "light", context = context) { AppPrefs.setLanguage(context, "en"); onPrefsChange(AppPrefs.snapshot(context)) }
         }}
 
-        SettingSectionTitle("Background Daemon (Keep-Alive)")
-        ClayCard { Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            ToggleRow("Auto-start on Boot", prefs.autoStart) { AppPrefs.setAutoStart(context, it); onPrefsChange(AppPrefs.snapshot(context)) }
-            ToggleRow("Keep-Alive Background Service", prefs.batteryExempt) {
+        SettingSectionTitle(context.str("background_title"), palette = palette, context = context)
+        ClayCard(palette = palette) { Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            ToggleRow(context.str("autostart"), prefs.autoStart, palette = palette, isLight = prefs.theme == "light", context = context) { AppPrefs.setAutoStart(context, it); onPrefsChange(AppPrefs.snapshot(context)) }
+            ToggleRow(context.str("battery_exempt"), prefs.batteryExempt, palette = palette, isLight = prefs.theme == "light", context = context) {
                 context.startActivity(Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, Uri.parse("package:${context.packageName}")))
                 AppPrefs.setBatteryExempt(context, true); onPrefsChange(AppPrefs.snapshot(context))
             }
-            TextRow("Listening Local Port", prefs.port.toString())
-            Text("Binding: 127.0.0.1 only", color = TextLo, fontSize = 12.sp)
+            TextRow(context.str("port_label"), prefs.port.toString(), palette = palette, context = context)
+            Text(context.str("port_binding"), color = palette.textLo, fontSize = 12.sp)
         }}
 
-        SettingSectionTitle("Sistem & Update Channel")
-        ClayCard { Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            TextRow("Core Version", "OmniRoute JNI bridge 1.0.0")
-            TextRow("Rust Engine", "libomniroute.so (cdylib)")
-            TextRow("Rootfs Environment", "Debian 12 Bookworm")
-            TextRow("Host PRoot OS", "Linux 5.10+ (PRoot)")
-            ActionButton("Cek Pembaruan", onClick = { AppLog.log("INFO", "update check requested") })
-            ActionButton("Reset ke Pengaturan Default", onClick = {
+        SettingSectionTitle(context.str("system_title"), palette = palette, context = context)
+        ClayCard(palette = palette) { Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            TextRow(context.str("core_version"), context.str("setting_core_version"), palette = palette, context = context)
+            TextRow(context.str("rust_engine"), context.str("setting_rust_engine"), palette = palette, context = context)
+            TextRow(context.str("rootfs_env"), context.str("setting_rootfs_env"), palette = palette, context = context)
+            TextRow(context.str("host_proot_os"), context.str("setting_host_os"), palette = palette, context = context)
+            ActionButton(context.str("btn_check_update"), onClick = { scopeCheckUpdate(context) }, palette = palette, context = context)
+            ActionButton(context.str("btn_reset_defaults"), onClick = {
                 AppPrefs.reset(context)
                 onPrefsChange(AppPrefs.snapshot(context))
                 AppLog.log("INFO", "settings reset to defaults")
-            })
+            }, palette = palette, context = context)
         }}
 
         Spacer(Modifier.height(20.dp))
@@ -594,40 +703,40 @@ private fun SettingsTab(prefs: AppPrefs.Snapshot, onPrefsChange: (AppPrefs.Snaps
 }
 
 @Composable
-private fun SettingSectionTitle(title: String) {
-    Text(title, color = Gold, fontSize = 12.sp, fontWeight = FontWeight.ExtraBold, letterSpacing = 1.1.sp)
+private fun SettingSectionTitle(title: String, palette: ThemePalette.Palette, context: Context) {
+    Text(title, color = palette.gold, fontSize = 12.sp, fontWeight = FontWeight.ExtraBold, letterSpacing = 1.1.sp)
 }
 
 @Composable
-private fun ThemeOption(label: String, active: Boolean, onClick: () -> Unit) {
+private fun ThemeOption(label: String, active: Boolean, palette: ThemePalette.Palette, context: Context, isLight: Boolean, onClick: () -> Unit) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .shadow(if (active) 10.dp else 0.dp, RoundedCornerShape(20.dp), ambientColor = Gold.copy(alpha = 0.15f), spotColor = Gold.copy(alpha = 0.18f))
+            .shadow(if (active) 10.dp else 0.dp, RoundedCornerShape(20.dp), ambientColor = palette.gold.copy(alpha = 0.15f), spotColor = palette.gold.copy(alpha = 0.18f))
             .clip(RoundedCornerShape(20.dp))
-            .background(if (active) Color(0xFF1C2541) else SlateCard)
+            .background(if (active) (if (isLight) palette.gold.copy(alpha = 0.10f) else Color(0xFF1C2541)) else palette.card)
             .clickable(onClick = onClick)
             .padding(horizontal = 16.dp, vertical = 14.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Box(Modifier.size(16.dp).clip(CircleShape).background(if (active) Gold else Color(0xFF475569)))
+        Box(Modifier.size(16.dp).clip(CircleShape).background(if (active) palette.gold else palette.inactive))
         Spacer(Modifier.width(12.dp))
-        Text(label, color = TextHi, fontSize = 13.sp)
+        Text(label, color = if (active && isLight) Color(0xFF0F172A) else palette.textHi, fontSize = 13.sp)
     }
 }
 
 @Composable
-private fun ToggleRow(label: String, checked: Boolean, onCheckedChange: (Boolean) -> Unit) {
+private fun ToggleRow(label: String, checked: Boolean, palette: ThemePalette.Palette, context: Context, isLight: Boolean = false, onCheckedChange: (Boolean) -> Unit) {
     Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp)) {
-        Text(label, color = TextHi, modifier = Modifier.weight(1f), fontSize = 13.sp)
+        Text(label, color = palette.textHi, modifier = Modifier.weight(1f), fontSize = 13.sp)
         Switch(checked = checked, onCheckedChange = onCheckedChange)
     }
 }
 
 @Composable
-private fun TextRow(label: String, value: String) {
+private fun TextRow(label: String, value: String, palette: ThemePalette.Palette, context: Context) {
     Row(modifier = Modifier.fillMaxWidth()) {
-        Text(label, color = TextLo, modifier = Modifier.weight(1f), fontSize = 12.sp)
-        Text(value, color = TextHi, fontSize = 12.sp, textAlign = androidx.compose.ui.text.style.TextAlign.Right)
+        Text(label, color = palette.textLo, modifier = Modifier.weight(1f), fontSize = 12.sp)
+        Text(value, color = palette.textHi, fontSize = 12.sp, textAlign = androidx.compose.ui.text.style.TextAlign.Right)
     }
 }

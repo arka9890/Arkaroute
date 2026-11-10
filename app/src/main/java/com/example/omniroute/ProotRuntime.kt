@@ -24,15 +24,33 @@ object ProotRuntime {
     fun nodeRoot(context: Context): File = File(context.filesDir, "proot/node")
 
     /** Path (guest-side) of the omniroute CLI entry, saved by the setup step. */
-    fun entryJs(context: Context): String? =
-        File(context.filesDir, MARKER).takeIf { it.exists() }
+    fun entryJs(context: Context): String? {
+        val marker = File(context.filesDir, MARKER).takeIf { it.exists() }
             ?.readText()?.trim()?.takeIf { it.isNotEmpty() }
+        if (marker != null) return marker
+
+        // Fallback: entri default omniroute jika marker hilang tapi service jalan
+        return "/root/node/lib/node_modules/omniroute/bin/omniroute.mjs"
+    }
+
+    /** Path host-side of the entry JS, atau null kalau belum terpasang. */
+    fun entryHostPath(context: Context): String? =
+        entryJs(context)?.let { guest ->
+            File(nodeRoot(context), guest.removePrefix("/root/node/")).takeIf { it.exists() }
+                ?.absolutePath
+        }
 
     fun isInstalled(context: Context): Boolean {
+        // 1. Cek file fisik (normal path)
         if (!File(prootBinary(context)).exists()) return false
         if (!File(rootfs(context), "usr/bin").isDirectory) return false
         if (!File(nodeRoot(context), "bin/node").exists()) return false
-        return entryJs(context) != null
+        if (entryHostPath(context) != null) return true
+
+        // 2. Fallback: marker hilang (misal setelah install ulang APK) tapi
+        //    proot masih menjalankan omniroute di port default → anggap installed.
+        val prefs = AppPrefs.snapshot(context)
+        return probe(prefs.port)
     }
 
     /**

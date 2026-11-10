@@ -40,50 +40,79 @@ class OmniRouteService : Service() {
     private fun startDaemon() {
         val prefs = AppPrefs.snapshot(this)
         acquireWakeLock()
-        if (ProotRuntime.isInstalled(this)) {
-            startProot(prefs.port)
-            startForeground(NOTIFICATION_ID, notification("OmniRoute online", "PROot omniroute :${prefs.port}"))
-        } else {
-            NativeBridge.start(prefs.port, prefs.upstream)
-            startForeground(NOTIFICATION_ID, notification("OmniRoute online", "Gateway ${prefs.port} • ${prefs.upstream}"))
+        try {
+            if (ProotRuntime.isInstalled(this)) {
+                startProot(prefs.port)
+                startForeground(NOTIFICATION_ID, notification("OmniRoute online", "PROot omniroute :${prefs.port}"))
+            } else {
+                NativeBridge.start(prefs.port, prefs.upstream)
+                startForeground(NOTIFICATION_ID, notification("OmniRoute online", "Gateway ${prefs.port} • ${prefs.upstream}"))
+            }
+            AppLog.log("INFO", "daemon started on port ${prefs.port}")
+        } catch (e: Exception) {
+            AppLog.error("DAEMON", "gagal memulai daemon: ${e.message}", e)
+            throw e
         }
     }
 
     private fun startProot(port: Int) {
         stopProot()
-        val cmd = ProotRuntime.command(this, port)
-        val pb = ProcessBuilder(cmd)
-        pb.environment()["PROOT_LOADER"] = ProotRuntime.loaderBinary(this) ?: ""
-        pb.environment()["PROOT_TMP_DIR"] = File(filesDir, "proot/tmp").apply { mkdirs() }.absolutePath
-        pb.environment()["PROOT_NO_SECCOMP"] = "1"
-        pb.environment()["LD_LIBRARY_PATH"] = File(filesDir, "proot/lib").apply { mkdirs() }.absolutePath
-        pb.redirectOutput(File(filesDir, "proot/omniroute.log"))
-        pb.redirectErrorStream(true)
-        proot = pb.start()
-        AppLog.log("INFO", "proot omniroute started on port $port")
+        try {
+            val cmd = ProotRuntime.command(this, port)
+            val pb = ProcessBuilder(cmd)
+            pb.environment()["PROOT_LOADER"] = ProotRuntime.loaderBinary(this) ?: ""
+            pb.environment()["PROOT_TMP_DIR"] = File(filesDir, "proot/tmp").apply { mkdirs() }.absolutePath
+            pb.environment()["PROOT_NO_SECCOMP"] = "1"
+            pb.environment()["LD_LIBRARY_PATH"] = File(filesDir, "proot/lib").apply { mkdirs() }.absolutePath
+            pb.redirectErrorStream(true)
+
+            proot = pb.start()
+
+            // Stream output proot ke AppLog agar error terlihat di tab Service
+            Thread {
+                proot?.inputStream?.bufferedReader()?.useLines { lines ->
+                    lines.forEach { line ->
+                        if (line.isNotBlank()) AppLog.log("PROOT", line)
+                    }
+                }
+            }.apply { isDaemon = true; start() }
+
+            AppLog.log("INFO", "proot omniroute dimulai pada port $port")
+        } catch (e: Exception) {
+            AppLog.error("PROOT", "gagal memulai proot: ${e.message}", e)
+            throw e
+        }
     }
 
     private fun stopProot() {
         proot?.destroy()
         proot = null
+        AppLog.log("INFO", "proot dihentikan")
     }
 
     private fun restartDaemon() {
         val prefs = AppPrefs.snapshot(this)
         acquireWakeLock()
-        if (ProotRuntime.isInstalled(this)) {
-            stopProot()
-            startProot(prefs.port)
-            startForeground(NOTIFICATION_ID, notification("OmniRoute restarted", "PROot omniroute :${prefs.port}"))
-        } else {
-            NativeBridge.restart(prefs.port, prefs.upstream)
-            startForeground(NOTIFICATION_ID, notification("OmniRoute restarted", "Gateway ${prefs.port} • ${prefs.upstream}"))
+        try {
+            if (ProotRuntime.isInstalled(this)) {
+                stopProot()
+                startProot(prefs.port)
+                startForeground(NOTIFICATION_ID, notification("OmniRoute restarted", "PROot omniroute :${prefs.port}"))
+            } else {
+                NativeBridge.restart(prefs.port, prefs.upstream)
+                startForeground(NOTIFICATION_ID, notification("OmniRoute restarted", "Gateway ${prefs.port} • ${prefs.upstream}"))
+            }
+            AppLog.log("INFO", "daemon restarted on port ${prefs.port}")
+        } catch (e: Exception) {
+            AppLog.error("DAEMON", "gagal memulai ulang daemon: ${e.message}", e)
+            throw e
         }
     }
 
     private fun stopDaemon() {
         stopProot()
-        NativeBridge.stop()
+        try { NativeBridge.stop() } catch (_: Exception) {}
+        AppLog.log("INFO", "daemon dihentikan")
         wakeLock?.release()
         wakeLock = null
         stopForeground(STOP_FOREGROUND_REMOVE)
