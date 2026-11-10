@@ -1,0 +1,22 @@
+[package]
+name = "omniroute-core"
+version = "1.0.0"
+edition = "2021"
+description = "OmniRoute Android core daemon and JNI bridge"
+
+[lib]
+name = "omniroute"
+crate-type = ["cdylib"]
+
+[dependencies]
+jni = "0.21"
+
+[profile.release]
+opt-level = 3
+lto = true
+panic = "abort"
+codegen-units = 1
+strip = true
+
+[profile.release.package."*"]
+codegen-units = 1
