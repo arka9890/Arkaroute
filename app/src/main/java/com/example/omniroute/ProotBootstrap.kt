@@ -31,6 +31,14 @@ object ProotBootstrap {
     private const val NODE_URL = "https://nodejs.org/dist/v22.23.4/node-v22.23.4-linux-arm64.tar.xz"
     private const val NODE_TOPDIR = "node-v22.23.4-linux-arm64"
 
+    // registry npm: utama lalu mirror Asia (kadang registry.npmjs.org timeout
+    // di jaringan seluler → ETIMEDOUT). Versi paket tetap sama persis.
+    private val NPM_REGISTRIES = listOf(
+        "https://registry.npmjs.org/",
+        "https://registry.npmmirror.com/",
+    )
+    private const val NPM_ATTEMPTS = 3
+
     private val _progress = MutableStateFlow("")
     val progress: StateFlow<String> = _progress
     private val _running = MutableStateFlow(false)
@@ -80,14 +88,19 @@ object ProotBootstrap {
                 File(libDir, "libandroid-shmem.so").copyTo(File(prootDir, "lib/libandroid-shmem.so"), overwrite = true)
             } else say("Library proot: sudah ada, dilewati")
 
-            // 2. Debian rootfs
+            // 2. Debian rootfs — ambil dari aset bawaan APK (offline, instan),
+            //    unduh dari internet hanya kalau asetnya tidak ada.
             if (!rootfsReady(c)) {
-                val url = resolveRootfsUrl()
-                say("Mengunduh rootfs Debian 12 (~95 MB)...")
-                val xz = download(url, File(prootDir, "rootfs.tar.xz"))
+                val tarFile = File(prootDir, "rootfs.tar.xz")
+                if (extractBundledAsset(c, "rootfs.tar.xz", tarFile)) {
+                    say("Mengambil rootfs Debian 12 dari bawaan aplikasi...")
+                } else {
+                    say("Mengunduh rootfs Debian 12 (~95 MB)...")
+                    download(resolveRootfsUrl(), tarFile)
+                }
                 say("Mengekstrak rootfs...")
-                extractTarXz(xz, ProotRuntime.rootfs(c))
-                xz.delete()
+                extractTarXz(tarFile, ProotRuntime.rootfs(c))
+                tarFile.delete()
                 check(rootfsReady(c)) { "rootfs tidak lengkap setelah ekstraksi" }
             } else say("Rootfs Debian: sudah ada, dilewati")
 
@@ -100,13 +113,18 @@ object ProotBootstrap {
                 AppLog.log("SETUP", "peringatan DNS guest: ${it.message}")
             }
 
-            // 3. Node.js
+            // 3. Node.js — sama: dari aset bawaan dulu, unduh sebagai cadangan.
             if (!nodeReady(c)) {
-                say("Mengunduh Node.js 22 (~30 MB)...")
-                val xz = download(NODE_URL, File(prootDir, "node.tar.xz"))
+                val tarFile = File(prootDir, "node.tar.xz")
+                if (extractBundledAsset(c, "node.tar.xz", tarFile)) {
+                    say("Mengambil Node.js 22 dari bawaan aplikasi...")
+                } else {
+                    say("Mengunduh Node.js 22 (~30 MB)...")
+                    download(NODE_URL, tarFile)
+                }
                 say("Mengekstrak Node.js...")
-                extractTarXz(xz, ProotRuntime.nodeRoot(c))
-                xz.delete()
+                extractTarXz(tarFile, ProotRuntime.nodeRoot(c))
+                tarFile.delete()
                 // tar has a top-level dir; flatten it
                 if (!nodeReady(c)) {
                     val sub = ProotRuntime.nodeRoot(c).resolve(NODE_TOPDIR)
@@ -199,8 +217,37 @@ object ProotBootstrap {
         }
     }
 
-    /** Runs `npm install -g omniroute` inside the proot rootfs; returns the entry js path. */
+    /**
+     * Memasang omniroute lewat npm di dalam rootfs.
+     *
+     * npm sering gagal di jaringan seluler ("network read ETIMEDOUT"), jadi:
+     *  - coba registry utama lalu mirror (npmmirror.com),
+     *  - longgarkan timeout & kurangi jumlah socket,
+     *  - ulangi beberapa kali. Cache npm tersimpan di /root/.npm sehingga
+     *    percobaan berikutnya jauh lebih murah (tidak mengulang unduhan).
+     *
+     * Return: path guest dari entry CLI.
+     */
     private fun npmInstallOmniroute(context: Context): String {
+        var lastError: Exception? = null
+        for (attempt in 1..NPM_ATTEMPTS) {
+            for (registry in NPM_REGISTRIES) {
+                try {
+                    say("npm percobaan $attempt • ${registry.substringAfter("https://")}")
+                    runNpm(context, registry)
+                    return verifyOmniroutePackage(context)
+                } catch (e: Exception) {
+                    lastError = e
+                    AppLog.log("SETUP", "npm gagal ($registry): ${e.message}")
+                    cleanupPartialInstall(context)
+                }
+            }
+        }
+        throw lastError ?: IllegalStateException("npm install omniroute gagal")
+    }
+
+    /** Menjalankan satu proses `npm install -g omniroute` di dalam proot. */
+    private fun runNpm(context: Context, registry: String) {
         val c = context.applicationContext
         val prootDir = File(c.filesDir, "proot")
         val cmd = listOf(
@@ -218,6 +265,14 @@ object ProotBootstrap {
             "TERM=xterm",
             "NODE_PATH=/root/node/lib/node_modules",
             "/root/node/bin/npm", "install", "-g", "omniroute",
+            "--registry=$registry",
+            "--fetch-retries=5",
+            "--fetch-retry-maxtimeout=120000",
+            "--fetch-timeout=600000",
+            "--maxsockets=3",
+            "--no-audit",
+            "--no-fund",
+            "--prefer-offline",
         )
         val pb = ProcessBuilder(cmd)
         pb.environment()["PROOT_LOADER"] = ProotRuntime.loaderBinary(c) ?: ""
@@ -243,10 +298,41 @@ object ProotBootstrap {
         line.isDaemon = true
         line.start()
         val code = proc.waitFor()
+        check(code == 0) { "npm exit $code" }
+    }
 
-        // npm yang terputus (mis. koneksi putus) bisa meninggalkan paket di folder
-        // staging (.omniroute-XXXX) sementara folder final tidak lengkap.
-        // Kalau begitu, promote staging yang utuh ke folder final.
+    /**
+     * Salin aset bawaan APK (rootfs.tar.xz / node.tar.xz) ke folder kerja.
+     * Return true kalau aset tersedia & berhasil disalin.
+     */
+    private fun extractBundledAsset(context: Context, assetName: String, dest: File): Boolean {
+        return try {
+            context.assets.open(assetName).use { input ->
+                FileOutputStream(dest).use { output -> input.copyTo(output, 1 shl 16) }
+            }
+            AppLog.log("SETUP", "aset bawaan dipakai: $assetName")
+            true
+        } catch (e: Exception) {
+            AppLog.log("SETUP", "aset $assetName tidak tersedia (${e.message}) — pakai unduhan")
+            false
+        }
+    }
+
+    /** Buang paket setengah jadi agar percobaan berikutnya bersih. */
+    private fun cleanupPartialInstall(context: Context) {
+        val modulesDir = File(ProotRuntime.nodeRoot(context), "lib/node_modules")
+        runCatching {
+            modulesDir.listFiles()?.filter { it.name.startsWith(".omniroute-") }?.forEach { it.deleteRecursively() }
+        }
+    }
+
+    /**
+     * Pastikan paket omniroute benar-benar terpasang; kalau npm sempat terputus
+     * dan meninggalkan paket di folder staging (.omniroute-XXXX), promote
+     * staging yang utuh ke folder final. Return: path guest entry CLI.
+     */
+    private fun verifyOmniroutePackage(context: Context): String {
+        val c = context.applicationContext
         val modulesDir = File(ProotRuntime.nodeRoot(c), "lib/node_modules")
         val pkgFile = File(modulesDir, "omniroute/package.json")
         if (!pkgFile.exists()) {
@@ -262,8 +348,6 @@ object ProotBootstrap {
                 }
             }
         }
-
-        check(code == 0) { "npm exit $code" }
 
         // find the bin entry from package.json
         check(pkgFile.exists()) { "package.json omniroute tidak ditemukan" }
