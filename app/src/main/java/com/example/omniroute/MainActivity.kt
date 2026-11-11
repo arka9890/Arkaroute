@@ -344,6 +344,19 @@ private fun ServiceTab(
                         scopeCheckUpdate(context)
                     }, palette = palette, context = context)
                 }
+
+                DangerButton(context.str("btn_kill"), modifier = Modifier.fillMaxWidth(), palette = palette) {
+                    val intent = Intent(context, com.example.omniroute.service.OmniRouteService::class.java).apply {
+                        action = com.example.omniroute.service.OmniRouteService.ACTION_KILL
+                    }
+                    try {
+                        context.startService(intent)
+                    } catch (e: Exception) {
+                        AppLog.error("DAEMON", "kill gagal: ${e.message}")
+                    }
+                    AppLog.log("INFO", "kill: mengirim perintah stop proses omniroute")
+                    onUpdatePrefs()
+                }
             }
         }
 
@@ -541,6 +554,23 @@ private fun ActionButton(label: String, modifier: Modifier = Modifier, primary: 
         contentAlignment = Alignment.Center
     ) {
         Text(label, color = if (primary) Color(0xFF1F2937) else palette.textHi, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+    }
+}
+
+/** Tombol bahaya: kill paksa proses omniroute yang menahan port. */
+@Composable
+private fun DangerButton(label: String, modifier: Modifier = Modifier, palette: ThemePalette.Palette, onClick: () -> Unit) {
+    val shape = RoundedCornerShape(20.dp)
+    Box(
+        modifier = modifier
+            .clip(shape)
+            .background(palette.error.copy(alpha = 0.14f))
+            .border(1.dp, palette.error.copy(alpha = 0.45f), shape)
+            .clickable(onClick = onClick)
+            .padding(vertical = 12.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Text(label, color = palette.error, fontWeight = FontWeight.Bold, fontSize = 13.sp)
     }
 }
 

@@ -14,6 +14,7 @@ import com.example.omniroute.AppPrefs
 import com.example.omniroute.AppLog
 import com.example.omniroute.MainActivity
 import com.example.omniroute.NativeBridge
+import com.example.omniroute.OmniRouteKiller
 import com.example.omniroute.ProotRuntime
 import org.json.JSONObject
 import java.io.File
@@ -33,6 +34,7 @@ class OmniRouteService : Service() {
             ACTION_START -> startDaemon()
             ACTION_STOP -> stopDaemon()
             ACTION_RESTART -> restartDaemon()
+            ACTION_KILL -> killEngine()
         }
         return START_STICKY
     }
@@ -58,6 +60,9 @@ class OmniRouteService : Service() {
     private fun startProot(port: Int) {
         stopProot()
         try {
+            if (ProotRuntime.probe(port, 600)) {
+                AppLog.log("WARN", "port $port masih dipakai proses lain — tekan Kill Process, lalu Start lagi")
+            }
             val cmd = ProotRuntime.command(this, port)
             val pb = ProcessBuilder(cmd)
             pb.environment()["PROOT_LOADER"] = ProotRuntime.loaderBinary(this) ?: ""
@@ -67,13 +72,21 @@ class OmniRouteService : Service() {
             pb.redirectErrorStream(true)
 
             proot = pb.start()
+            val proc = proot ?: return
 
-            // Stream output proot ke AppLog agar error terlihat di tab Service
+            // Stream output proot ke AppLog agar error terlihat di tab Service.
+            // PENTING: kalau proses di-destroy (stop/restart/kill), stream ikut
+            // ditutup → InterruptedIOException. Wajib ditangkap, kalau tidak
+            // thread ini jadi FATAL EXCEPTION dan seluruh app ikut mati.
             Thread {
-                proot?.inputStream?.bufferedReader()?.useLines { lines ->
-                    lines.forEach { line ->
-                        if (line.isNotBlank()) AppLog.log("PROOT", line)
+                try {
+                    proc.inputStream.bufferedReader().useLines { lines ->
+                        lines.forEach { line ->
+                            if (line.isNotBlank()) AppLog.log("PROOT", line)
+                        }
                     }
+                } catch (e: Exception) {
+                    AppLog.log("INFO", "stream proot ditutup (${e.javaClass.simpleName})")
                 }
             }.apply { isDaemon = true; start() }
 
@@ -119,6 +132,27 @@ class OmniRouteService : Service() {
         stopSelf()
     }
 
+    /**
+     * Paksa bunyi semua proses omniroute/proot yang masih jalan dan lepaskan
+     * port — dipakai saat start gagal dengan "Port ... already in use".
+     */
+    private fun killEngine() {
+        stopProot()
+        try { NativeBridge.stop() } catch (_: Exception) {}
+        val killed = OmniRouteKiller.killAll()
+        val port = AppPrefs.snapshot(this).port
+        Thread.sleep(500)
+        val busy = ProotRuntime.probe(port, 800)
+        AppLog.log(
+            "INFO",
+            "kill: $killed proses omniroute dihentikan • port $port ${if (busy) "MASIH TERPAKAI" else "sekarang bebas"}"
+        )
+        wakeLock?.release()
+        wakeLock = null
+        stopForeground(STOP_FOREGROUND_REMOVE)
+        stopSelf()
+    }
+
     private fun acquireWakeLock() {
         if (wakeLock?.isHeld == true) return
         val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
@@ -157,6 +191,7 @@ class OmniRouteService : Service() {
         const val ACTION_START = "com.example.omniroute.action.START"
         const val ACTION_STOP = "com.example.omniroute.action.STOP"
         const val ACTION_RESTART = "com.example.omniroute.action.RESTART"
+        const val ACTION_KILL = "com.example.omniroute.action.KILL"
         private const val CHANNEL_ID = "omniroute_daemon"
         private const val NOTIFICATION_ID = 42001
 
