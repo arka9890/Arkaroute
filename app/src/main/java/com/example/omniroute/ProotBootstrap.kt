@@ -21,10 +21,10 @@ import java.net.URL
  * In-app installer for the PRoot engine. Checks each component; if missing it
  * downloads and installs it, if present it is skipped:
  *
- *  1. proot support libs (talloc + android-shmem) — copied from jniLibs
- *  2. Debian 12 rootfs — downloaded from images.linuxcontainers.org (~95 MB)
- *  3. Node.js 22 — downloaded from nodejs.org (~30 MB)
- *  4. omniroute — `npm install -g` inside the rootfs (~3-6 GB on disk)
+ *  1. proot support libs (talloc + android-shmem) â€” copied from jniLibs
+ *  2. Debian 12 rootfs â€” downloaded from images.linuxcontainers.org (~95 MB)
+ *  3. Node.js 22 â€” downloaded from nodejs.org (~30 MB)
+ *  4. omniroute â€” `npm install -g` inside the rootfs (~3-6 GB on disk)
  */
 object ProotBootstrap {
     private const val LXC_BASE = "https://images.linuxcontainers.org/images/debian/bookworm/arm64/default/"
@@ -32,7 +32,7 @@ object ProotBootstrap {
     private const val NODE_TOPDIR = "node-v22.23.4-linux-arm64"
 
     // registry npm: utama lalu mirror Asia (kadang registry.npmjs.org timeout
-    // di jaringan seluler → ETIMEDOUT). Versi paket tetap sama persis.
+    // di jaringan seluler â†’ ETIMEDOUT). Versi paket tetap sama persis.
     private val NPM_REGISTRIES = listOf(
         "https://registry.npmjs.org/",
         "https://registry.npmmirror.com/",
@@ -88,7 +88,7 @@ object ProotBootstrap {
                 File(libDir, "libandroid-shmem.so").copyTo(File(prootDir, "lib/libandroid-shmem.so"), overwrite = true)
             } else say("Library proot: sudah ada, dilewati")
 
-            // 2. Debian rootfs — ambil dari aset bawaan APK (offline, instan),
+            // 2. Debian rootfs â€” ambil dari aset bawaan APK (offline, instan),
             //    unduh dari internet hanya kalau asetnya tidak ada.
             if (!rootfsReady(c)) {
                 val tarFile = File(prootDir, "rootfs.tar.xz")
@@ -99,21 +99,21 @@ object ProotBootstrap {
                     download(resolveRootfsUrl(), tarFile)
                 }
                 say("Mengekstrak rootfs...")
-                extractTarXz(tarFile, ProotRuntime.rootfs(c))
+                extractTar(tarFile, ProotRuntime.rootfs(c))
                 tarFile.delete()
                 check(rootfsReady(c)) { "rootfs tidak lengkap setelah ekstraksi" }
             } else say("Rootfs Debian: sudah ada, dilewati")
 
             // DNS untuk guest. WAJIB setelah ekstraksi rootfs: image Debian
             // berisi etc/resolv.conf sebagai symlink ke /run/systemd/resolve
-            // yang tidak ada di dalam guest → symlink menggantung, DNS mati dan
+            // yang tidak ada di dalam guest â†’ symlink menggantung, DNS mati dan
             // `npm install` gagal. Ekstraksi menimpa file yang kita tulis
             // sebelumnya, jadi langkah ini harus dijalankan SETELAH ekstraksi.
             runCatching { ensureGuestDns(c) }.onFailure {
                 AppLog.log("SETUP", "peringatan DNS guest: ${it.message}")
             }
 
-            // 3. Node.js — sama: dari aset bawaan dulu, unduh sebagai cadangan.
+            // 3. Node.js â€” sama: dari aset bawaan dulu, unduh sebagai cadangan.
             if (!nodeReady(c)) {
                 val tarFile = File(prootDir, "node.tar.xz")
                 if (extractBundledAsset(c, "node.tar.xz", tarFile)) {
@@ -123,7 +123,7 @@ object ProotBootstrap {
                     download(NODE_URL, tarFile)
                 }
                 say("Mengekstrak Node.js...")
-                extractTarXz(tarFile, ProotRuntime.nodeRoot(c))
+                extractTar(tarFile, ProotRuntime.nodeRoot(c))
                 tarFile.delete()
                 // tar has a top-level dir; flatten it
                 if (!nodeReady(c)) {
@@ -134,14 +134,26 @@ object ProotBootstrap {
                 check(nodeReady(c)) { "node tidak lengkap setelah ekstraksi" }
             } else say("Node.js 22: sudah ada, dilewati")
 
-            // 4. omniroute via npm inside the rootfs
+            // 4. omniroute â€” kalau paketnya sudah dibundel di dalam APK
+            //    (assets/omniroute.tar.gz) Extract langsung, TANPA npm.
+            //    Kalau bundel tidak ada (mis. build tanpa aset), pakai npm
+            //    dengan retry + mirror registry.
             if (ProotRuntime.installedEntryHostPath(c) == null) {
-                say("Memasang omniroute (npm install, 10-30 menit)...")
-                val entry = npmInstallOmniroute(c)
-                File(c.filesDir, "proot/omniroute-installed").writeText(entry)
+                val bundle = File(prootDir, "omniroute.pkg")
+                if (extractBundledAsset(c, "omniroute.pkg", bundle)) {
+                    say("Memasang omniroute dari bawaan aplikasi (tanpa npm)...")
+                    extractTar(bundle, File(ProotRuntime.nodeRoot(c), "lib/node_modules"), tolerateIncomplete = true)
+                    bundle.delete()
+                    val entry = verifyOmniroutePackage(c)
+                    File(c.filesDir, "proot/omniroute-installed").writeText(entry)
+                } else {
+                    say("Memasang omniroute (npm install, 10-30 menit)...")
+                    val entry = npmInstallOmniroute(c)
+                    File(c.filesDir, "proot/omniroute-installed").writeText(entry)
+                }
             } else say("Omniroute: sudah ada, dilewati")
 
-            say("Selesai — engine siap.")
+            say("Selesai â€” engine siap.")
             null
         } catch (e: Exception) {
             AppLog.log("ERROR", "setup gagal: ${e.message}")
@@ -191,10 +203,36 @@ object ProotBootstrap {
         return dest
     }
 
-    private fun extractTarXz(xz: File, dest: File) {
+    /**
+     * Ekstrak arsip tar (kompresi dideteksi dari magic bytes: gzip / xz / polos).
+     * tolerateIncomplete: untuk bundel engine, arsip terpotong tidak boleh
+     * menggagalkan seluruh install — file intinya dicek terpisah.
+     */
+    private fun extractTar(archive: File, dest: File, tolerateIncomplete: Boolean = false) {
+        try {
+            extractTarInternal(archive, dest)
+        } catch (e: Exception) {
+            if (!tolerateIncomplete) throw e
+            AppLog.log("SETUP", "arsip tidak lengkap (${e.message}) — lanjut jika file inti ada")
+        }
+    }
+
+    private fun extractTarInternal(archive: File, dest: File) {
         dest.mkdirs()
         val base = dest.canonicalPath
-        TarArchiveInputStream(XZCompressorInputStream(BufferedInputStream(FileInputStream(xz)))).use { tar ->
+        val raw = BufferedInputStream(FileInputStream(archive))
+        val magic = ByteArray(6)
+        raw.mark(16) // penanda supaya bisa di-rewind setelah peek
+        val read = raw.read(magic)
+        raw.reset()
+        val stream: java.io.InputStream = when {
+            read >= 2 && magic[0] == 0x1F.toByte() && magic[1] == 0x8B.toByte() ->
+                org.apache.commons.compress.compressors.gzip.GzipCompressorInputStream(raw)
+            read >= 6 && magic[0] == 0xFD.toByte() && magic[1] == '7'.code.toByte() ->
+                XZCompressorInputStream(raw)
+            else -> raw
+        }
+        TarArchiveInputStream(stream).use { tar ->
             while (true) {
                 val e: TarArchiveEntry = tar.nextTarEntry ?: break
                 val out = File(dest, e.name)
@@ -233,7 +271,7 @@ object ProotBootstrap {
         for (attempt in 1..NPM_ATTEMPTS) {
             for (registry in NPM_REGISTRIES) {
                 try {
-                    say("npm percobaan $attempt • ${registry.substringAfter("https://")}")
+                    say("npm percobaan $attempt â€¢ ${registry.substringAfter("https://")}")
                     runNpm(context, registry)
                     return verifyOmniroutePackage(context)
                 } catch (e: Exception) {
@@ -313,7 +351,7 @@ object ProotBootstrap {
             AppLog.log("SETUP", "aset bawaan dipakai: $assetName")
             true
         } catch (e: Exception) {
-            AppLog.log("SETUP", "aset $assetName tidak tersedia (${e.message}) — pakai unduhan")
+            AppLog.log("SETUP", "aset $assetName tidak tersedia (${e.message}) â€” pakai unduhan")
             false
         }
     }

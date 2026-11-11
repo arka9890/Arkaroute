@@ -1,0 +1,4 @@
+﻿# Paket engine besar (omniroute + deps) tidak di-commit: GitHub menolak file >100 MB.
+# APK resmi sudah memuatnya sebagai asset; rebuild dengan:
+#   scripts/build-engine-bundle.sh
+omniroute.pkg
