@@ -12,7 +12,9 @@ android {
     }
 
     defaultConfig {
-        applicationId = "com.example.omniroute"
+        // applicationId bisa dioverride lewat -PappId=... untuk build uji
+        // (mis. instalasi bersih tanpa menyentuh data app utama).
+        applicationId = (project.findProperty("appId") as String?) ?: "com.example.omniroute"
         minSdk = 24
         targetSdk = 36
         versionCode = 1

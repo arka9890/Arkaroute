@@ -46,6 +46,20 @@ object ProotBootstrap {
     fun libsReady(c: Context) = File(c.filesDir, "proot/lib/libtalloc.so.2").exists()
 
     /**
+     * Tulis /etc/resolv.conf milik guest sebagai file biasa.
+     * Symlink bawaan image Debian (menunjuk /run/systemd/resolve/...) menggantung
+     * di dalam guest sehingga DNS tidak bisa dipakai npm install.
+     */
+    private fun ensureGuestDns(context: Context) {
+        val resolv = File(ProotRuntime.rootfs(context), "etc/resolv.conf")
+        resolv.parentFile?.mkdirs()
+        // hapus symlink menggantung (atau file lama) lalu tulis file biasa
+        runCatching { java.nio.file.Files.deleteIfExists(resolv.toPath()) }
+        resolv.writeText("nameserver 8.8.8.8\nnameserver 1.1.1.1\n")
+        say("DNS guest: resolv.conf ditulis")
+    }
+
+    /**
      * Installs everything that is missing. Safe to call repeatedly: existing
      * components are skipped. Returns null on success, or an error message.
      */
@@ -66,22 +80,6 @@ object ProotBootstrap {
                 File(libDir, "libandroid-shmem.so").copyTo(File(prootDir, "lib/libandroid-shmem.so"), overwrite = true)
             } else say("Library proot: sudah ada, dilewati")
 
-            // DNS untuk guest. Image Debian punya symlink ke /run/systemd/resolve
-            // yang tidak ada di dalam guest → symlink menggantung; menulis ke
-            // sana melempar FileNotFoundException dan membatalkan install.
-            // Jadi: hapus symlink menggantung dulu, lalu tulis file biasa.
-            runCatching {
-                val resolv = File(ProotRuntime.rootfs(c), "etc/resolv.conf")
-                if (!resolv.exists()) {
-                    resolv.parentFile?.mkdirs()
-                    runCatching { java.nio.file.Files.deleteIfExists(resolv.toPath()) }
-                    resolv.writeText("nameserver 8.8.8.8\nnameserver 1.1.1.1\n")
-                    say("DNS guest: resolv.conf ditulis")
-                }
-            }.onFailure {
-                AppLog.log("SETUP", "peringatan DNS guest: ${it.message}")
-            }
-
             // 2. Debian rootfs
             if (!rootfsReady(c)) {
                 val url = resolveRootfsUrl()
@@ -92,6 +90,15 @@ object ProotBootstrap {
                 xz.delete()
                 check(rootfsReady(c)) { "rootfs tidak lengkap setelah ekstraksi" }
             } else say("Rootfs Debian: sudah ada, dilewati")
+
+            // DNS untuk guest. WAJIB setelah ekstraksi rootfs: image Debian
+            // berisi etc/resolv.conf sebagai symlink ke /run/systemd/resolve
+            // yang tidak ada di dalam guest → symlink menggantung, DNS mati dan
+            // `npm install` gagal. Ekstraksi menimpa file yang kita tulis
+            // sebelumnya, jadi langkah ini harus dijalankan SETELAH ekstraksi.
+            runCatching { ensureGuestDns(c) }.onFailure {
+                AppLog.log("SETUP", "peringatan DNS guest: ${it.message}")
+            }
 
             // 3. Node.js
             if (!nodeReady(c)) {
