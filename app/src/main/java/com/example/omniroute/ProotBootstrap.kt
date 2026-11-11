@@ -66,12 +66,20 @@ object ProotBootstrap {
                 File(libDir, "libandroid-shmem.so").copyTo(File(prootDir, "lib/libandroid-shmem.so"), overwrite = true)
             } else say("Library proot: sudah ada, dilewati")
 
-            // DNS for the guest
-            File(ProotRuntime.rootfs(c), "etc/resolv.conf").let {
-                if (!it.exists()) {
-                    it.parentFile?.mkdirs()
-                    it.writeText("nameserver 8.8.8.8\nnameserver 1.1.1.1\n")
+            // DNS untuk guest. Image Debian punya symlink ke /run/systemd/resolve
+            // yang tidak ada di dalam guest → symlink menggantung; menulis ke
+            // sana melempar FileNotFoundException dan membatalkan install.
+            // Jadi: hapus symlink menggantung dulu, lalu tulis file biasa.
+            runCatching {
+                val resolv = File(ProotRuntime.rootfs(c), "etc/resolv.conf")
+                if (!resolv.exists()) {
+                    resolv.parentFile?.mkdirs()
+                    runCatching { java.nio.file.Files.deleteIfExists(resolv.toPath()) }
+                    resolv.writeText("nameserver 8.8.8.8\nnameserver 1.1.1.1\n")
+                    say("DNS guest: resolv.conf ditulis")
                 }
+            }.onFailure {
+                AppLog.log("SETUP", "peringatan DNS guest: ${it.message}")
             }
 
             // 2. Debian rootfs
@@ -102,7 +110,7 @@ object ProotBootstrap {
             } else say("Node.js 22: sudah ada, dilewati")
 
             // 4. omniroute via npm inside the rootfs
-            if (ProotRuntime.entryJs(c) == null) {
+            if (ProotRuntime.installedEntryHostPath(c) == null) {
                 say("Memasang omniroute (npm install, 10-30 menit)...")
                 val entry = npmInstallOmniroute(c)
                 File(c.filesDir, "proot/omniroute-installed").writeText(entry)
@@ -228,10 +236,29 @@ object ProotBootstrap {
         line.isDaemon = true
         line.start()
         val code = proc.waitFor()
+
+        // npm yang terputus (mis. koneksi putus) bisa meninggalkan paket di folder
+        // staging (.omniroute-XXXX) sementara folder final tidak lengkap.
+        // Kalau begitu, promote staging yang utuh ke folder final.
+        val modulesDir = File(ProotRuntime.nodeRoot(c), "lib/node_modules")
+        val pkgFile = File(modulesDir, "omniroute/package.json")
+        if (!pkgFile.exists()) {
+            val staging = modulesDir.listFiles()?.filter { it.isDirectory && it.name.startsWith(".omniroute-") } ?: emptyList()
+            val complete = staging.firstOrNull {
+                File(it, "package.json").exists() && File(it, "bin/omniroute.mjs").exists()
+            }
+            if (complete != null) {
+                val target = File(modulesDir, "omniroute")
+                target.deleteRecursively()
+                if (complete.renameTo(target)) {
+                    AppLog.log("SETUP", "paket omniroute dipulihkan dari ${complete.name}")
+                }
+            }
+        }
+
         check(code == 0) { "npm exit $code" }
 
         // find the bin entry from package.json
-        val pkgFile = File(ProotRuntime.nodeRoot(c), "lib/node_modules/omniroute/package.json")
         check(pkgFile.exists()) { "package.json omniroute tidak ditemukan" }
         val bin = JSONObject(pkgFile.readText()).optJSONObject("bin")
         val rel = bin?.let { b ->

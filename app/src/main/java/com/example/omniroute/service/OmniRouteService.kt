@@ -44,6 +44,9 @@ class OmniRouteService : Service() {
         acquireWakeLock()
         try {
             if (ProotRuntime.isInstalled(this)) {
+                // proxy Rust (fallback) bisa masih memegang port — lepaskan dulu
+                // supaya engine proot bisa bind port yang sama.
+                try { NativeBridge.stop() } catch (_: Exception) {}
                 startProot(prefs.port)
                 startForeground(NOTIFICATION_ID, notification("OmniRoute online", "PROot omniroute :${prefs.port}"))
             } else {

@@ -29,9 +29,19 @@ object ProotRuntime {
             ?.readText()?.trim()?.takeIf { it.isNotEmpty() }
         if (marker != null) return marker
 
-        // Fallback: entri default omniroute jika marker hilang tapi service jalan
-        return "/root/node/lib/node_modules/omniroute/bin/omniroute.mjs"
+        // Fallback: pakai path default HANYA kalau file-nya benar-benar ada.
+        // Kalau tidak, kembalikan null supaya installer tahu omniroute belum
+        // terpasang (dulu selalu mengembalikan path, sehingga npm install
+        // dilewati dan app jatuh ke proxy Rust).
+        val fallback = "/root/node/lib/node_modules/omniroute/bin/omniroute.mjs"
+        val host = File(nodeRoot(context), fallback.removePrefix("/root/node/"))
+        return if (host.exists()) fallback else null
     }
+
+    /** Path host-side entry CLI kalau paketnya benar-benar terpasang. */
+    fun installedEntryHostPath(context: Context): String? =
+        File(nodeRoot(context), "lib/node_modules/omniroute/bin/omniroute.mjs")
+            .takeIf { it.exists() }?.absolutePath
 
     /** Path host-side of the entry JS, atau null kalau belum terpasang. */
     fun entryHostPath(context: Context): String? =
