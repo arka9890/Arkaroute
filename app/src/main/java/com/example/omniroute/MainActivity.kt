@@ -589,7 +589,7 @@ private fun SettingsTab(prefs: AppPrefs.Snapshot, onPrefsChange: (AppPrefs.Snaps
                 context.startActivity(Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, Uri.parse("package:${context.packageName}")))
                 AppPrefs.setBatteryExempt(context, true); onPrefsChange(AppPrefs.snapshot(context))
             }
-            TextRow(context.str("port_label"), prefs.port.toString(), palette = palette, context = context)
+            PortEditor(prefs = prefs, onPrefsChange = onPrefsChange, palette = palette, context = context)
             Text(context.str("port_binding"), color = palette.textLo, fontSize = 12.sp)
         }}
 
@@ -647,5 +647,52 @@ private fun TextRow(label: String, value: String, palette: ThemePalette.Palette,
     Row(modifier = Modifier.fillMaxWidth()) {
         Text(label, color = palette.textLo, modifier = Modifier.weight(1f), fontSize = 12.sp)
         Text(value, color = palette.textHi, fontSize = 12.sp, textAlign = androidx.compose.ui.text.style.TextAlign.Right)
+    }
+}
+
+/** Editor port: simpan ke prefs; kalau service online → restart otomatis di port baru. */
+@Composable
+private fun PortEditor(prefs: AppPrefs.Snapshot, onPrefsChange: (AppPrefs.Snapshot) -> Unit, palette: ThemePalette.Palette, context: Context) {
+    var draft by remember(prefs.port) { mutableStateOf(prefs.port.toString()) }
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(context.str("port_label"), color = palette.textHi, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+            Text(context.str("port_hint"), color = palette.textLo, fontSize = 11.sp)
+        }
+        OutlinedTextField(
+            value = draft,
+            onValueChange = { draft = it.filter(Char::isDigit) },
+            singleLine = true,
+            modifier = Modifier.width(86.dp),
+            textStyle = androidx.compose.ui.text.TextStyle(color = palette.textHi, fontSize = 13.sp)
+        )
+        ActionButton(context.str("port_save"), primary = true, palette = palette, context = context, onClick = {
+            val p = draft.trim().toIntOrNull()
+            when {
+                p == null || p !in 1..65535 ->
+                    AppLog.error("SETTINGS", "port tidak valid: '$draft' (harus 1-65535)")
+                p == prefs.port ->
+                    AppLog.log("INFO", "port tidak berubah: $p")
+                else -> {
+                    val wasOnline = ProotRuntime.probe(prefs.port)
+                    AppPrefs.setPort(context, p)
+                    onPrefsChange(AppPrefs.snapshot(context))
+                    if (wasOnline) {
+                        val intent = Intent(context, com.example.omniroute.service.OmniRouteService::class.java).apply {
+                            action = com.example.omniroute.service.OmniRouteService.ACTION_RESTART
+                        }
+                        if (android.os.Build.VERSION.SDK_INT >= 26) context.startForegroundService(intent) else context.startService(intent)
+                        AppLog.log("INFO", "port $prefs.port → $p • service di-restart otomatis")
+                    } else {
+                        AppLog.log("INFO", "port $prefs.port → $p • aktif saat service di-Start")
+                    }
+                    draft = p.toString()
+                }
+            }
+        })
     }
 }
