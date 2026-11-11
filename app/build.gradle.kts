@@ -21,6 +21,20 @@ android {
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
+    signingConfigs {
+        // APK release memakai keystore debug yang sama supaya bisa dipasang
+        // di atas build debug tanpa menghapus data app (engine/proot/omniroute).
+        val debugStore = file(System.getProperty("user.home") + "/.android/debug.keystore")
+        if (debugStore.exists()) {
+            create("release") {
+                storeFile = debugStore
+                storePassword = "android"
+                keyAlias = "androiddebugkey"
+                keyPassword = "android"
+            }
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = false
@@ -28,6 +42,7 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
+            signingConfig = signingConfigs.findByName("release")
         }
     }
     compileOptions {
