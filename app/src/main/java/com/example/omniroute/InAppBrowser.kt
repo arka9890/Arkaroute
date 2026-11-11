@@ -85,6 +85,28 @@ class TabGroup(val id: String, val name: String, val color: Color)
 class BrowserState(private val context: Context) {
     companion object {
         const val MAX_TABS = 10
+
+        private val POPUP_HOOK_JS = """
+(function(){
+  if (window.__omniHooked) { return; }
+  window.__omniHooked = true;
+  function send(u){
+    try { if (u) { OmniRouteLink.open(String(u)); } } catch (e) {}
+  }
+  document.addEventListener('click', function(e){
+    var a = e.target && e.target.closest ? e.target.closest('a') : null;
+    if (!a) { return; }
+    var t = (a.getAttribute('target') || '').toLowerCase();
+    if (t === '_blank') {
+      e.preventDefault(); e.stopPropagation();
+      send(a.href || a.getAttribute('href'));
+    }
+  }, true);
+  try {
+    window.open = function(u){ send(u); return null; };
+  } catch (e) {}
+})();
+"""
     }
 
     val tabs = mutableStateListOf<BrowserTab>()
@@ -201,8 +223,13 @@ class BrowserState(private val context: Context) {
         settings.useWideViewPort = true
         settings.loadWithOverviewMode = true
         settings.mediaPlaybackRequiresUserGesture = false
-        settings.setSupportMultipleWindows(true)
-        settings.javaScriptCanOpenWindowsAutomatically = true
+        // Jalur multi-window Chromium (onCreateWindow/WebViewTransport) bikin app
+        // crash saat link membuka tab baru. Dimatikan; popup ditangani sendiri
+        // lewat JS bridge di bawah supaya tetap jadi tab di dalam app.
+        settings.setSupportMultipleWindows(false)
+        settings.javaScriptCanOpenWindowsAutomatically = false
+
+        addJavascriptInterface(LinkBridge(tab), "OmniRouteLink")
 
         webViewClient = object : WebViewClient() {
             override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
@@ -226,6 +253,7 @@ class BrowserState(private val context: Context) {
                 tab.progress = 100
                 tab.canGoBack = view?.canGoBack() == true
                 tab.canGoForward = view?.canGoForward() == true
+                injectLinkHook(view)
             }
 
             override fun doUpdateVisitedHistory(view: WebView?, url: String?, isReload: Boolean) {
@@ -247,13 +275,37 @@ class BrowserState(private val context: Context) {
             override fun onCreateWindow(
                 view: WebView?, isDialog: Boolean, isUserGesture: Boolean, resultMsg: Message?
             ): Boolean {
-                // target=_blank → tab baru di dalam app
-                val transport = resultMsg?.obj as? WebView.WebViewTransport ?: return false
-                val created = newTab("about:blank", groupId = tab.groupId) ?: return false
-                transport.webView = created.webView
-                resultMsg.sendToTarget()
-                return true
+                // Seharusnya tidak dipanggil (multi-window dimatikan).
+                AppLog.log("WEB", "popup window ditolak, dibuka sebagai tab baru lewat JS")
+                return false
             }
+        }
+    }
+
+    /** Jembatan JS → app: link target=_blank / window.open dibelokkan ke tab baru. */
+    private inner class LinkBridge(private val tab: BrowserTab) {
+        @android.webkit.JavascriptInterface
+        fun open(url: String?) {
+            val u = url?.trim().orEmpty()
+            if (u.isEmpty() || u == "about:blank") return
+            android.os.Handler(android.os.Looper.getMainLooper()).post {
+                try {
+                    AppLog.log("WEB", "link tab baru: $u")
+                    newTab(u, groupId = tab.groupId)
+                } catch (e: Exception) {
+                    AppLog.error("WEB", "gagal membuka tab baru: ${e.message}")
+                }
+            }
+        }
+    }
+
+    /** Pasang hook JS supaya klik target=_blank / window.open jadi tab baru. */
+    private fun injectLinkHook(view: WebView?) {
+        val w = view ?: return
+        try {
+            w.evaluateJavascript(POPUP_HOOK_JS, null)
+        } catch (e: Exception) {
+            AppLog.error("WEB", "hook link gagal: ${e.message}")
         }
     }
 }
