@@ -27,11 +27,12 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.GlobalScope
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.Dispatchers
 import com.omniroute.app.config.ConfigStore
 import com.omniroute.app.config.KeystoreCryptoEngine
 import com.omniroute.app.data.AndroidServiceController
@@ -43,7 +44,7 @@ import com.omniroute.app.ui.screens.ServiceScreen
 import com.omniroute.app.ui.screens.ProvidersScreen
 import com.omniroute.app.ui.screens.CombosScreen
 import com.omniroute.app.ui.screens.RoutesScreen
-import com.omniroute.app.ui.screens.WebViewScreen
+import com.omniroute.app.ui.screens.DashboardScreen
 import com.omniroute.app.ui.shell.AppShell
 import com.omniroute.app.ui.shell.Tab
 import com.omniroute.app.ui.theme.ClayTheme
@@ -82,7 +83,12 @@ class MainActivity : ComponentActivity() {
                 AppShell(
                     port = core.port,
                     state = state,
-                    onSaveConfigAndRestart = { c, a -> repository.saveConfigAndRestart(c, a) },
+                    onSaveConfigAndRestart = { c, a ->
+                        val feedback = repository.saveConfigAndRestart(c, a)
+                        if (feedback != null) {
+                            Toast.makeText(context, feedback, Toast.LENGTH_SHORT).show()
+                        }
+                    },
                     onSaveAppMeta = { a -> repository.saveAppMeta(a) },
                     onToast = { msg -> Toast.makeText(context, msg, Toast.LENGTH_SHORT).show() },
                     pendingComboEditor = pendingComboEditor,
@@ -108,11 +114,10 @@ class MainActivity : ComponentActivity() {
                                 Toast.makeText(context, R.string.logs_copied_toast, Toast.LENGTH_SHORT).show()
                             },
                         )
-                        Tab.WEBVIEW -> WebViewScreen(
-                            url = state.app.webviewUrl,
-                            online = state.health != null,
+                        Tab.DASHBOARD -> DashboardScreen(
+                            state = state,
                             // AppMeta only (webviewUrl) — no server restart; also force
-                            // an immediate health fetch so the offline retry clears.
+                            // an immediate health fetch so the offline hint clears.
                             onRefreshUrl = { newUrl ->
                                 repository.saveAppMeta(state.app.copy(webviewUrl = newUrl))
                                 pollScope.launch { repository.pollOnce() }
@@ -169,9 +174,16 @@ class MainActivity : ComponentActivity() {
 @Composable
 fun PermissionsRequest() {
     val context = LocalContext.current
+    // We re-check the grant state after the dialog closes. The service will
+    // show its notification as soon as the permission is granted; no other
+    // UI depends on it, so a toast is sufficient feedback.
     val launcher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestPermission(),
-        onResult = { /* tanpa aksi */ }
+        onResult = { granted ->
+            if (!granted) {
+                Toast.makeText(context, R.string.permission_notifications_denied, Toast.LENGTH_SHORT).show()
+            }
+        }
     )
     LaunchedEffect(Unit) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&

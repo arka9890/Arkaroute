@@ -10,7 +10,7 @@
     <string name="service_title">OmniRoute Gateway</string>
 
     <string name="tab_service">Layanan</string>
-    <string name="tab_webview">WebView</string>
+    <string name="tab_dashboard">Dasbor</string>
     <string name="tab_providers">Penyedia</string>
     <string name="tab_combos">Kombo</string>
     <string name="tab_routes">Rute</string>
@@ -54,8 +54,7 @@
     <string name="webview_copy_desc">Salin URL</string>
     <string name="webview_open_desc">Buka di browser</string>
     <string name="webview_copied_toast">URL disalin</string>
-    <string name="webview_offline_hint">Gateway offline — dashboard tidak dapat dimuat. Periksa daemon lalu coba lagi.</string>
-    <string name="webview_retry">Coba lagi</string>
+    <string name="webview_open_ext">Buka di browser</string>
     <string name="cf_tunnel_label">CF TUNNEL</string>
     <string name="cf_tunnel_soon">segera</string>
     <string name="providers_add">+ Provider</string>
@@ -105,6 +104,7 @@
     <string name="settings_check_update">Periksa Update OmniRoute</string>
     <string name="settings_hibernate">Hibernate</string>
     <string name="settings_segera">segera</string>
+    <string name="permission_notifications_denied">Izin notifikasi ditolak — gateway tetap jalan tanpa notifikasi foreground</string>
     <string name="settings_create_key_title">Buat Gateway API Key</string>
     <string name="settings_create_key_save">Simpan</string>
     <string name="settings_create_key_cancel">Batal</string>

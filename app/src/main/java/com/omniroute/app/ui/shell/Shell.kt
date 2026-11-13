@@ -6,7 +6,6 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -46,15 +45,14 @@ import com.omniroute.app.R
 import com.omniroute.app.data.GatewayUiState
 import com.omniroute.app.config.AppMeta
 import com.omniroute.app.config.GatewayConfigJson
-import com.omniroute.app.ui.components.ClayCard
 import com.omniroute.app.ui.screens.SettingsScreen
 import com.omniroute.app.ui.theme.ClayTheme
 
-enum class Tab { SERVICE, WEBVIEW, PROVIDERS, COMBOS, ROUTES }
+enum class Tab { SERVICE, DASHBOARD, PROVIDERS, COMBOS, ROUTES }
 
 private fun tabIcon(tab: Tab): ImageVector = when (tab) {
     Tab.SERVICE -> Icons.Filled.Dns
-    Tab.WEBVIEW -> Icons.Filled.Monitor
+    Tab.DASHBOARD -> Icons.Filled.Monitor
     Tab.PROVIDERS -> Icons.Filled.ModelTraining
     Tab.COMBOS -> Icons.Filled.AltRoute
     Tab.ROUTES -> Icons.Filled.Route
@@ -62,7 +60,7 @@ private fun tabIcon(tab: Tab): ImageVector = when (tab) {
 
 private fun tabLabelRes(tab: Tab): Int = when (tab) {
     Tab.SERVICE -> R.string.tab_service
-    Tab.WEBVIEW -> R.string.tab_webview
+    Tab.DASHBOARD -> R.string.tab_dashboard
     Tab.PROVIDERS -> R.string.tab_providers
     Tab.COMBOS -> R.string.tab_combos
     Tab.ROUTES -> R.string.tab_routes
@@ -222,7 +220,7 @@ private fun Header(
                 tint = colors.onSurface,
             )
         }
-        // Avatar — cyan circle, opens Settings
+        // Avatar — cyan circle, opens Settings (Person icon is in material-icons-core)
         Box(
             modifier = Modifier
                 .size(40.dp)
@@ -283,28 +281,4 @@ private fun BottomBar(selectedTab: Tab, onSelect: (Tab) -> Unit) {
     }
 }
 
-/** Placeholder body behind the avatar; Task 8 fills the real Settings screen. Routes screen wired in MainActivity. */
-@Composable
-fun SettingsPlaceholder(modifier: Modifier = Modifier) {
-    val colors = ClayTheme.colors
-    Box(
-        modifier = modifier
-            .fillMaxSize()
-            .padding(16.dp),
-    ) {
-        ClayCard {
-            Text(
-                text = stringResource(R.string.settings_title),
-                color = colors.onSurface,
-                fontWeight = FontWeight.Bold,
-                fontSize = 18.sp,
-            )
-            Spacer(Modifier.height(8.dp))
-            Text(
-                text = stringResource(R.string.settings_placeholder),
-                color = colors.onSurface.copy(alpha = 0.7f),
-                fontSize = 14.sp,
-            )
-        }
-    }
-}
+

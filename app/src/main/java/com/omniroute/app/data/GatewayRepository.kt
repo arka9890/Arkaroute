@@ -57,6 +57,7 @@ class GatewayRepository(
     private val store: ConfigStore,
     private val serviceController: ServiceController,
     private val nowMs: () -> Long = { System.currentTimeMillis() },
+    private val restartScheduler: RestartScheduler = DefaultRestartScheduler(),
 ) {
     private val _state: MutableStateFlow<GatewayUiState>
 
@@ -139,21 +140,26 @@ class GatewayRepository(
     }
 
     /**
-     * Persists the new config, then restarts the daemon (STOP, 300ms, START).
+     * Persists the new config, then restarts the daemon (STOP, gap, START).
      * Returns the toast message on success, or the error message on failure.
+     *
+     * The start is dispatched via [restartScheduler] so the calling thread
+     * (Main, in Compose) is not blocked for the restart gap. Production
+     * [GatewayRepository] uses [DefaultRestartScheduler] (background thread
+     * with 300ms sleep); unit tests inject a synchronous fake so the
+     * stop→start ordering is deterministic and observable from the test.
      */
     fun saveConfigAndRestart(core: GatewayConfigJson, app: AppMeta): String? {
-        return try {
+        try {
             store.save(core, app)
-            _state.update { it.copy(core = core, app = app, lastError = null) }
-            serviceController.stopService()
-            Thread.sleep(300)
-            serviceController.startService()
-            "Gateway dimulai ulang"
         } catch (e: Exception) {
             _state.update { it.copy(lastError = e.message) }
-            e.message
+            return e.message
         }
+        _state.update { it.copy(core = core, app = app, lastError = null) }
+        serviceController.stopService()
+        restartScheduler.scheduleStart(serviceController::startService)
+        return "Gateway dimulai ulang"
     }
 
     /** Persists AppMeta only — no server restart (core ignores AppMeta). */
@@ -162,3 +168,28 @@ class GatewayRepository(
         _state.update { it.copy(app = app) }
     }
 }
+
+/**
+ * Schedules the gateway start after a restart gap. Production implementation
+ * offloads to a background thread so the calling (Main) thread is not
+ * blocked; tests inject a synchronous implementation to observe the
+ * stop→start ordering deterministically.
+ */
+interface RestartScheduler {
+    fun scheduleStart(start: () -> Unit)
+}
+
+/**
+ * Background-thread scheduler with a 300ms gap. The start is fire-and-forget:
+ * if the service fails to start, [GatewayService] surfaces it via its own
+ * notification.
+ */
+internal class DefaultRestartScheduler : RestartScheduler {
+    override fun scheduleStart(start: () -> Unit) {
+        kotlin.concurrent.thread(name = "omniroute-restart-gap") {
+            Thread.sleep(300)
+            start()
+        }
+    }
+}
+

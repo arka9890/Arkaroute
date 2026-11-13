@@ -76,7 +76,21 @@ class GatewayRepositoryTest {
         bridge = FakeBridge()
         healthSource = FakeHealthSource()
         serviceController = FakeServiceController()
-        repository = GatewayRepository(bridge, healthSource, store(), serviceController)
+        // Synchronous scheduler so the stop→start ordering is deterministic.
+        repository = GatewayRepository(
+            bridge,
+            healthSource,
+            store(),
+            serviceController,
+            nowMs = { System.currentTimeMillis() },
+            restartScheduler = SynchronousRestartScheduler(),
+        )
+    }
+
+    private class SynchronousRestartScheduler : RestartScheduler {
+        override fun scheduleStart(start: () -> Unit) {
+            start()
+        }
     }
 
     private fun store(): ConfigStore = ConfigStore(storeDir, IdentityCryptoEngine())

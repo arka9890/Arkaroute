@@ -46,7 +46,7 @@ class ShellTest {
 
     private fun tabLabels(): List<String> = listOf(
         context.getString(R.string.tab_service),
-        context.getString(R.string.tab_webview),
+        context.getString(R.string.tab_dashboard),
         context.getString(R.string.tab_providers),
         context.getString(R.string.tab_combos),
         context.getString(R.string.tab_routes),
